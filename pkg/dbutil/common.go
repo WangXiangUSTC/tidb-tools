@@ -280,7 +280,7 @@ func GetCRC32Checksums(ctx context.Context, db *sql.DB, schemaName, tableName st
 		columnIsNull = append(columnIsNull, fmt.Sprintf("ISNULL(`%s`)", col.Name.O))
 	}
 
-	query := fmt.Sprintf("SELECT CONCAT_WS(',', %s) AS k, CAST(CRC32(CONCAT_WS(',', %s, CONCAT(%s))) AS UNSIGNED) AS checksum FROM `%s`.`%s` WHERE %s;",
+	query := fmt.Sprintf("SELECT CONCAT_WS(', ', %s) AS k, CAST(CRC32(CONCAT_WS(',', %s, CONCAT(%s))) AS UNSIGNED) AS checksum FROM `%s`.`%s` WHERE %s;",
 		strings.Join(keys, ", "), strings.Join(columnNames, ", "), strings.Join(columnIsNull, ", "), schemaName, tableName, limitRange)
 	log.Debugf("checksums sql: %s, args: %v", query, args)
 

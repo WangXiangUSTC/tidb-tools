@@ -204,12 +204,59 @@ CheckResult:
 	//removeSameChecksum(t.sourceChecksums, t.targetChecksums)
 	log.Infof("source checksums: %v", t.sourceChecksums)
 	log.Infof("target checksums: %v", t.targetChecksums)
-	t.generateFixSQL()
-	return equal, nil
+	return t.generateFixSQL(ctx)
 }
 
-func (t *TableDiff) generateFixSQL(ctx context.Context) error {
+func keyToArgs(key string) []interface{} {
+	keyItems := strings.Split(key, ", ")
+	ai := make([]interface{}, 0, len(keyItems))
+	for _, a := range keyItems {
+		ai = append(ai, a)
+	}
+	return ai
+}
+
+func (t *TableDiff) generateFixSQL(ctx context.Context) (bool, error) {
+	equal := true
+	_, orderKeyCols := dbutil.SelectUniqueOrderKey(t.TargetTable.info)
 	columns, where := getItems(ctx, t.TargetTable.info, SliceToMap(t.IgnoreColumns))
+
+	generate := func(key string) error {
+		data1, null1, err := t.getSourceRow(ctx, columns, where, keyToArgs(key))
+		if err != nil {
+			return errors.Trace(err)
+		}
+		data2, null2, err := getRow(ctx, t.TargetTable.Conn, getQuerySQL(ctx, t.TargetTable.Schema, t.TargetTable.Table, columns, where), keyToArgs(key))
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		var sql string
+		if data1 == nil {
+			// generate delete sql
+			sql = generateDML("delete", data2, null2, orderKeyCols, t.TargetTable.info, t.TargetTable.Schema)
+		} else if data2 == nil {
+			// generate insert sql
+			sql = generateDML("replace", data1, null1, orderKeyCols, t.TargetTable.info, t.TargetTable.Schema)
+		} else {
+			equal, _, _ := compareData(data1, data2, null1, null2, orderKeyCols)
+			if equal {
+				return nil
+			}
+			// generate update sql
+			sql = generateDML("replace", data1, null1, orderKeyCols, t.TargetTable.info, t.TargetTable.Schema)
+		}
+
+		if sql == "" {
+			return nil
+		}
+
+		equal = false
+		t.wg.Add(1)
+		t.sqlCh <- sql
+
+		return nil
+	}
 
 	for key, checksum1 := range t.sourceChecksums {
 		if checksum2, ok := t.targetChecksums[key]; ok {
@@ -218,41 +265,47 @@ func (t *TableDiff) generateFixSQL(ctx context.Context) error {
 				delete(t.targetChecksums, key)
 			} else {
 				// generate update sql
-				data1, null1, err := getSourceRow(ctx, columns, where, strings.Split(key, ", "))
+				err := generate(key)
 				if err != nil {
-					return errors.Trace(err)
-				}
-				data2, null2, err := getRow(ctx, t.TargetTable.Conn, getQuerySQL(ctx, t.TargetTabl.Schema, t.TargetTabl.Table, columns, where), strings.Split(key, ", "))
-				if err != nil {
-					return errors.Trace(err)
+					return false, err
 				}
 
-				
 			}
 		} else {
-			// selete data from target
-			if exist {
-				if equal {
-					//
-				} else {
-					// generate update sql
-				}
-			} else {
-				// generate replace sql
+			err := generate(key)
+			if err != nil {
+				return false, err
 			}
-
-			delete(t.sourceChecksums, key)
+			/*
+				// selete data from target
+				if exist {
+					if equal {
+						//
+					} else {
+						// generate update sql
+					}
+				} else {
+					// generate replace sql
+				}
+			*/
 		}
+		delete(t.sourceChecksums, key)
+		delete(t.targetChecksums, key)
 	}
 
 	for key := range t.targetChecksums {
 		// generate delete sql
-
+		err := generate(key)
+		if err != nil {
+			return false, err
+		}
 	}
+
+	return equal, nil
 }
 
 func getItems(ctx context.Context, tableInfo *model.TableInfo, ignoreColumns map[string]interface{}) (string, string) {
-	orderKeys, orderKeyCols := dbutil.SelectUniqueOrderKey(tableInfo)
+	orderKeys, _ := dbutil.SelectUniqueOrderKey(tableInfo)
 	columns := "*"
 
 	if len(ignoreColumns) != 0 {
@@ -270,9 +323,9 @@ func getItems(ctx context.Context, tableInfo *model.TableInfo, ignoreColumns map
 		columns = fmt.Sprintf("%s, %s", columns, dbutil.ImplicitColName)
 	}
 
-	where := "where"
+	where := "true"
 	for _, key := range orderKeys {
-		where = fmt.Sprintf("%s %s = \"?\"", where, key)
+		where = fmt.Sprintf("%s AND %s = ?", where, key)
 	}
 
 	return columns, where
@@ -300,6 +353,7 @@ func (t *TableDiff) getSourceRow(ctx context.Context, columns, where string, arg
 }
 
 func getRow(ctx context.Context, db *sql.DB, query string, args []interface{}) (map[string][]byte, map[string]bool, error) {
+	log.Infof("query: %s", query)
 	rows, err := db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
@@ -315,10 +369,6 @@ func getRow(ctx context.Context, db *sql.DB, query string, args []interface{}) (
 	}
 
 	return nil, nil, nil
-}
-
-func (t *TableDiff) selectData() bool {
-
 }
 
 func (t *TableDiff) getSourceTableChecksum(ctx context.Context, job *CheckJob) (int64, error) {
