@@ -297,7 +297,7 @@ func (t *TableDiff) generateFixSQL(ctx context.Context) (bool, error) {
 	}
 
 	for key, checksum1 := range sourceChecksums {
-		t.Rlock()
+		t.RLock()
 		checksum2, ok := t.targetChecksums[key]
 		t.RUnlock()
 		if ok {
