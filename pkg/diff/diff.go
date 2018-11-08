@@ -221,6 +221,13 @@ func keyToArgs(key string) []interface{} {
 }
 
 func (t *TableDiff) generateFixSQL(ctx context.Context) (bool, error) {
+	sourceChecksums := make(map[string]int64)
+	t.Lock()
+	for k, v := range t.sourceChecksums {
+		sourceChecksums[k] = v
+	}
+	t.Unlock()
+
 	equal := true
 	_, orderKeyCols := dbutil.SelectUniqueOrderKey(t.TargetTable.info)
 	columns, where := getItems(ctx, t.TargetTable.info, SliceToMap(t.IgnoreColumns))
@@ -243,8 +250,10 @@ func (t *TableDiff) generateFixSQL(ctx context.Context) (bool, error) {
 		atomic.AddInt32(&num, 1)
 		defer func() {
 			atomic.AddInt32(&num, -1)
+			t.Lock()
 			delete(t.sourceChecksums, key)
 			delete(t.targetChecksums, key)
+			t.Unlock()
 		}()
 
 		data1, null1, err := t.getSourceRow(ctx, columns, where, keyToArgs(key))
@@ -287,11 +296,13 @@ func (t *TableDiff) generateFixSQL(ctx context.Context) (bool, error) {
 		return
 	}
 
-	for key, checksum1 := range t.sourceChecksums {
+	for key, checksum1 := range sourceChecksums {
 		if checksum2, ok := t.targetChecksums[key]; ok {
 			if checksum1 == checksum2 {
+				t.Lock()
 				delete(t.sourceChecksums, key)
 				delete(t.targetChecksums, key)
+				t.Unlock()
 				continue
 			} else {
 				// generate update sql
@@ -316,7 +327,14 @@ func (t *TableDiff) generateFixSQL(ctx context.Context) (bool, error) {
 		}
 	}
 
-	for key := range t.targetChecksums {
+	targetChecksums := make(map[string]int64)
+	t.Lock()
+	for k, v := range t.targetChecksums {
+		targetChecksums[k] = v
+	}
+	t.Unlock()
+
+	for key := range targetChecksums {
 		// generate delete sql
 		go generate(key)
 	}
