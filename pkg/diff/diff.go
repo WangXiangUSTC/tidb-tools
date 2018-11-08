@@ -21,6 +21,8 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
@@ -221,15 +223,34 @@ func (t *TableDiff) generateFixSQL(ctx context.Context) (bool, error) {
 	_, orderKeyCols := dbutil.SelectUniqueOrderKey(t.TargetTable.info)
 	columns, where := getItems(ctx, t.TargetTable.info, SliceToMap(t.IgnoreColumns))
 
-	generate := func(key string) error {
+	var num int32
+	maxNum := int32(1000)
+	var selectErr error
+
+	wait := func() {
+		for {
+			if atomic.LoadInt32(&num) < maxNum {
+				return
+			}
+
+			time.Sleep(time.Second)
+		}
+	}
+
+	generate := func(key string) {
+		atomic.AddInt32(&num, 1)
+		defer atomic.AddInt32(&num, -1)
+		log.Infof("num: %d", num)
+
 		data1, null1, err := t.getSourceRow(ctx, columns, where, keyToArgs(key))
 		if err != nil {
-			//errCh <- err
-			return errors.Trace(err)
+			log.Errorf("error: %v, data: %v", err, data1)
+			selectErr = err
 		}
 		data2, null2, err := getRow(ctx, t.TargetTable.Conn, getQuerySQL(ctx, t.TargetTable.Schema, t.TargetTable.Table, columns, where), keyToArgs(key))
 		if err != nil {
-			return errors.Trace(err)
+			log.Errorf("error: %v, data: %v", err, data2)
+			selectErr = err
 		}
 
 		var sql string
@@ -242,21 +263,21 @@ func (t *TableDiff) generateFixSQL(ctx context.Context) (bool, error) {
 		} else {
 			equal, _, _ := compareData(data1, data2, null1, null2, orderKeyCols)
 			if equal {
-				return nil
+				return
 			}
 			// generate update sql
 			sql = generateDML("replace", data1, null1, orderKeyCols, t.TargetTable.info, t.TargetTable.Schema)
 		}
 
 		if sql == "" {
-			return nil
+			return
 		}
 
 		equal = false
 		t.wg.Add(1)
 		t.sqlCh <- sql
 
-		return nil
+		return
 	}
 
 	for key, checksum1 := range t.sourceChecksums {
@@ -266,17 +287,12 @@ func (t *TableDiff) generateFixSQL(ctx context.Context) (bool, error) {
 				delete(t.targetChecksums, key)
 			} else {
 				// generate update sql
-				err := generate(key)
-				if err != nil {
-					return false, err
-				}
-
+				wait()
+				go generate(key)
 			}
 		} else {
-			err := generate(key)
-			if err != nil {
-				return false, err
-			}
+			wait()
+			go generate(key)
 			/*
 				// selete data from target
 				if exist {
@@ -296,11 +312,23 @@ func (t *TableDiff) generateFixSQL(ctx context.Context) (bool, error) {
 
 	for key := range t.targetChecksums {
 		// generate delete sql
-		err := generate(key)
-		if err != nil {
-			return false, err
+		go generate(key)
+	}
+	log.Infof("num: %d", num)
+
+	for {
+		time.Sleep(time.Second)
+
+		if atomic.LoadInt32(&num) == 0 {
+			break
 		}
 	}
+	
+	if selectErr != nil {
+		return false, selectErr
+	}
+
+
 
 	return equal, nil
 }
@@ -354,7 +382,7 @@ func (t *TableDiff) getSourceRow(ctx context.Context, columns, where string, arg
 }
 
 func getRow(ctx context.Context, db *sql.DB, query string, args []interface{}) (map[string][]byte, map[string]bool, error) {
-	log.Infof("query: %s", query)
+	log.Infof("query: %s, args: %v", query, args)
 	rows, err := db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
