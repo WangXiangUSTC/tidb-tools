@@ -224,6 +224,7 @@ func (t *TableDiff) generateFixSQL(ctx context.Context) (bool, error) {
 	generate := func(key string) error {
 		data1, null1, err := t.getSourceRow(ctx, columns, where, keyToArgs(key))
 		if err != nil {
+			//errCh <- err
 			return errors.Trace(err)
 		}
 		data2, null2, err := getRow(ctx, t.TargetTable.Conn, getQuerySQL(ctx, t.TargetTable.Schema, t.TargetTable.Table, columns, where), keyToArgs(key))
@@ -438,6 +439,8 @@ func (t *TableDiff) checkChunkDataEqual(ctx context.Context, checkJobs []*CheckJ
 		for k, c := range targetChecksums {
 			t.targetChecksums[k] = c
 		}
+
+		removeSameChecksum(t.sourceChecksums, t.targetChecksums)
 		t.Unlock()
 
 		/*
