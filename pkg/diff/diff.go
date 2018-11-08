@@ -207,6 +207,8 @@ CheckResult:
 	log.Infof("source checksums: %v", t.sourceChecksums)
 	log.Infof("target checksums: %v", t.targetChecksums)
 	return t.generateFixSQL(ctx)
+	// TODO: add count check.
+	//count1, err := dbutil.GetRowCount(ctx, t.)
 }
 
 func keyToArgs(key string) []interface{} {
@@ -239,15 +241,20 @@ func (t *TableDiff) generateFixSQL(ctx context.Context) (bool, error) {
 
 	generate := func(key string) {
 		atomic.AddInt32(&num, 1)
-		defer atomic.AddInt32(&num, -1)
-		log.Infof("num: %d", num)
+		defer func() {
+			atomic.AddInt32(&num, -1)
+			delete(t.sourceChecksums, key)
+			delete(t.targetChecksums, key)
+		}()
 
 		data1, null1, err := t.getSourceRow(ctx, columns, where, keyToArgs(key))
 		if err != nil {
 			log.Errorf("error: %v, data: %v", err, data1)
 			selectErr = err
 		}
-		data2, null2, err := getRow(ctx, t.TargetTable.Conn, getQuerySQL(ctx, t.TargetTable.Schema, t.TargetTable.Table, columns, where), keyToArgs(key))
+		query := getQuerySQL(ctx, t.TargetTable.Schema, t.TargetTable.Table, columns, where)
+		log.Infof("query: %v, args: %v, from target", query, key)
+		data2, null2, err := getRow(ctx, t.TargetTable.Conn, query, keyToArgs(key))
 		if err != nil {
 			log.Errorf("error: %v, data: %v", err, data2)
 			selectErr = err
@@ -285,6 +292,7 @@ func (t *TableDiff) generateFixSQL(ctx context.Context) (bool, error) {
 			if checksum1 == checksum2 {
 				delete(t.sourceChecksums, key)
 				delete(t.targetChecksums, key)
+				continue
 			} else {
 				// generate update sql
 				wait()
@@ -306,29 +314,29 @@ func (t *TableDiff) generateFixSQL(ctx context.Context) (bool, error) {
 				}
 			*/
 		}
-		delete(t.sourceChecksums, key)
-		delete(t.targetChecksums, key)
 	}
 
 	for key := range t.targetChecksums {
 		// generate delete sql
 		go generate(key)
 	}
-	log.Infof("num: %d", num)
 
 	for {
-		time.Sleep(time.Second)
-
 		if atomic.LoadInt32(&num) == 0 {
-			break
+			t.RLock()
+			if len(t.sourceChecksums) == 0 && len(t.targetChecksums) == 0 {
+				t.RUnlock()
+				break
+			}
+			t.RUnlock()
 		}
+
+		time.Sleep(time.Second)
 	}
-	
+
 	if selectErr != nil {
 		return false, selectErr
 	}
-
-
 
 	return equal, nil
 }
@@ -368,6 +376,7 @@ func getQuerySQL(ctx context.Context, schema, table, columns, where string) stri
 func (t *TableDiff) getSourceRow(ctx context.Context, columns, where string, args []interface{}) (map[string][]byte, map[string]bool, error) {
 	for _, sourceTable := range t.SourceTables {
 		query := getQuerySQL(ctx, sourceTable.Schema, sourceTable.Table, columns, where)
+		log.Infof("query %v, args: %v, from: source", query, args)
 		data, null, err := getRow(ctx, sourceTable.Conn, query, args)
 		if err != nil {
 			return nil, nil, err
@@ -382,11 +391,11 @@ func (t *TableDiff) getSourceRow(ctx context.Context, columns, where string, arg
 }
 
 func getRow(ctx context.Context, db *sql.DB, query string, args []interface{}) (map[string][]byte, map[string]bool, error) {
-	log.Infof("query: %s, args: %v", query, args)
 	rows, err := db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
+	defer rows.Close()
 
 	for rows.Next() {
 		data, null, err := dbutil.ScanRow(rows)
