@@ -303,6 +303,59 @@ func GetSchemas(ctx context.Context, db *sql.DB) ([]string, error) {
 	return schemas, errors.Trace(rows.Err())
 }
 
+// GetCRC32Checksums returns every row's checksums code of some data by given condition
+func GetCRC32Checksums(ctx context.Context, db *sql.DB, schemaName, tableName string, keys []string, tbInfo *model.TableInfo, limitRange string, args []interface{}, ignoreColumns map[string]interface{}) (map[string]int64, error) {
+	/*
+		calculate CRC32 checksum example:
+		mysql> SELECT CONCAT_WS(',', id) AS k, CAST(CRC32(CONCAT_WS(',', id, name, age, CONCAT(ISNULL(id), ISNULL(name), ISNULL(age)))AS UNSIGNED) AS checksum FROM test.test WHERE id > 0 AND id < 10;
+		+------+------------+
+		| k    | checksum   |
+		+------+------------+
+		| 1    | 2448516583 |
+		| 2    | 2478300094 |
+		| 3    | 2855860073 |
+		+------+------------+
+	*/
+
+	checksums := make(map[string]int64)
+	columnNames := make([]string, 0, len(tbInfo.Columns))
+	columnIsNull := make([]string, 0, len(tbInfo.Columns))
+	for _, col := range tbInfo.Columns {
+		if _, ok := ignoreColumns[col.Name.O]; ok {
+			continue
+		}
+		columnNames = append(columnNames, fmt.Sprintf("`%s`", col.Name.O))
+		columnIsNull = append(columnIsNull, fmt.Sprintf("ISNULL(`%s`)", col.Name.O))
+	}
+
+	query := fmt.Sprintf("SELECT CONCAT_WS(', ', %s) AS k, CAST(CRC32(CONCAT_WS(',', %s, CONCAT(%s))) AS UNSIGNED) AS checksum FROM `%s`.`%s` WHERE %s;",
+		strings.Join(keys, ", "), strings.Join(columnNames, ", "), strings.Join(columnIsNull, ", "), schemaName, tableName, limitRange)
+	log.Debugf("checksums sql: %s, args: %v", query, args)
+
+	rows, err := db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		fields, _, err1 := ScanRow(rows)
+		if err1 != nil {
+			return nil, errors.Trace(err1)
+		}
+
+		key := string(fields["k"])
+		checksum, err1 := strconv.ParseInt(string(fields["checksum"]), 10, 64)
+		if err1 != nil {
+			return nil, errors.Trace(err1)
+		}
+
+		checksums[key] = checksum
+	}
+
+	return checksums, nil
+}
+
 // GetCRC32Checksum returns checksum code of some data by given condition
 func GetCRC32Checksum(ctx context.Context, db *sql.DB, schemaName, tableName string, tbInfo *model.TableInfo, limitRange string, args []interface{}, ignoreColumns map[string]interface{}) (int64, error) {
 	/*

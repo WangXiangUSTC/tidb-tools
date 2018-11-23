@@ -21,6 +21,8 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/ngaut/log"
 	"github.com/pingcap/errors"
@@ -85,10 +87,17 @@ type TableDiff struct {
 	sqlCh chan string
 
 	wg sync.WaitGroup
+
+	sourceChecksums map[string]int64
+	targetChecksums map[string]int64
+
+	sync.RWMutex
 }
 
 // Equal tests whether two database have same data and schema.
 func (t *TableDiff) Equal(ctx context.Context, writeFixSQL func(string) error) (bool, bool, error) {
+	t.sourceChecksums = make(map[string]int64)
+	t.targetChecksums = make(map[string]int64)
 	t.sqlCh = make(chan string)
 	t.wg.Add(1)
 	go func() {
@@ -193,7 +202,232 @@ CheckResult:
 			return equal, nil
 		}
 	}
+
+	//removeSameChecksum(t.sourceChecksums, t.targetChecksums)
+	log.Infof("source checksums length: %d", len(t.sourceChecksums))
+	log.Infof("target checksums length: %d", len(t.targetChecksums))
+	return t.generateFixSQL(ctx)
+	// TODO: add count check.
+	//count1, err := dbutil.GetRowCount(ctx, t.)
+}
+
+func keyToArgs(key string) []interface{} {
+	keyItems := strings.Split(key, ", ")
+	ai := make([]interface{}, 0, len(keyItems))
+	for _, a := range keyItems {
+		ai = append(ai, a)
+	}
+	return ai
+}
+
+func (t *TableDiff) generateFixSQL(ctx context.Context) (bool, error) {
+	sourceChecksums := make(map[string]int64)
+	t.Lock()
+	for k, v := range t.sourceChecksums {
+		sourceChecksums[k] = v
+	}
+	t.Unlock()
+
+	equal := true
+	_, orderKeyCols := dbutil.SelectUniqueOrderKey(t.TargetTable.info)
+	columns, where := getItems(ctx, t.TargetTable.info, SliceToMap(t.IgnoreColumns))
+
+	var num int32
+	maxNum := int32(1000)
+	var selectErr error
+
+	wait := func() {
+		for {
+			if atomic.LoadInt32(&num) < maxNum {
+				return
+			}
+
+			time.Sleep(time.Second)
+		}
+	}
+
+	generate := func(key string) {
+		atomic.AddInt32(&num, 1)
+		defer func() {
+			atomic.AddInt32(&num, -1)
+			t.Lock()
+			delete(t.sourceChecksums, key)
+			delete(t.targetChecksums, key)
+			t.Unlock()
+		}()
+
+		data1, null1, err := t.getSourceRow(ctx, columns, where, keyToArgs(key))
+		if err != nil {
+			log.Errorf("error: %v, data: %v", err, data1)
+			selectErr = err
+		}
+		query := getQuerySQL(ctx, t.TargetTable.Schema, t.TargetTable.Table, columns, where)
+		log.Infof("query: %v, args: %v, from target", query, key)
+		data2, null2, err := getRow(ctx, t.TargetTable.Conn, query, keyToArgs(key))
+		if err != nil {
+			log.Errorf("error: %v, data: %v", err, data2)
+			selectErr = err
+		}
+
+		var sql string
+		if data1 == nil {
+			// generate delete sql
+			sql = generateDML("delete", data2, null2, orderKeyCols, t.TargetTable.info, t.TargetTable.Schema)
+		} else if data2 == nil {
+			// generate insert sql
+			sql = generateDML("replace", data1, null1, orderKeyCols, t.TargetTable.info, t.TargetTable.Schema)
+		} else {
+			equal, _, _ := compareData(data1, data2, null1, null2, orderKeyCols)
+			if equal {
+				return
+			}
+			// generate update sql
+			sql = generateDML("replace", data1, null1, orderKeyCols, t.TargetTable.info, t.TargetTable.Schema)
+		}
+
+		if sql == "" {
+			return
+		}
+
+		equal = false
+		t.wg.Add(1)
+		t.sqlCh <- sql
+
+		return
+	}
+
+	for key, checksum1 := range sourceChecksums {
+		t.RLock()
+		checksum2, ok := t.targetChecksums[key]
+		t.RUnlock()
+		if ok {
+			if checksum1 == checksum2 {
+				t.Lock()
+				delete(t.sourceChecksums, key)
+				delete(t.targetChecksums, key)
+				t.Unlock()
+				continue
+			} else {
+				// generate update sql
+				wait()
+				go generate(key)
+			}
+		} else {
+			wait()
+			go generate(key)
+			/*
+				// selete data from target
+				if exist {
+					if equal {
+						//
+					} else {
+						// generate update sql
+					}
+				} else {
+					// generate replace sql
+				}
+			*/
+		}
+	}
+
+	targetChecksums := make(map[string]int64)
+	t.Lock()
+	for k, v := range t.targetChecksums {
+		targetChecksums[k] = v
+	}
+	t.Unlock()
+
+	for key := range targetChecksums {
+		// generate delete sql
+		go generate(key)
+	}
+
+	for {
+		if atomic.LoadInt32(&num) == 0 {
+			t.RLock()
+			if len(t.sourceChecksums) == 0 && len(t.targetChecksums) == 0 {
+				t.RUnlock()
+				break
+			}
+			t.RUnlock()
+		}
+
+		time.Sleep(time.Second)
+	}
+
+	if selectErr != nil {
+		return false, selectErr
+	}
+
 	return equal, nil
+}
+
+func getItems(ctx context.Context, tableInfo *model.TableInfo, ignoreColumns map[string]interface{}) (string, string) {
+	orderKeys, _ := dbutil.SelectUniqueOrderKey(tableInfo)
+	columns := "*"
+
+	if len(ignoreColumns) != 0 {
+		columnNames := make([]string, 0, len(tableInfo.Columns))
+		for _, col := range tableInfo.Columns {
+			if _, ok := ignoreColumns[col.Name.O]; ok {
+				continue
+			}
+			columnNames = append(columnNames, col.Name.O)
+		}
+		columns = strings.Join(columnNames, ", ")
+	}
+
+	if orderKeys[0] == dbutil.ImplicitColName {
+		columns = fmt.Sprintf("%s, %s", columns, dbutil.ImplicitColName)
+	}
+
+	where := "true"
+	for _, key := range orderKeys {
+		where = fmt.Sprintf("%s AND %s = ?", where, key)
+	}
+
+	return columns, where
+}
+
+func getQuerySQL(ctx context.Context, schema, table, columns, where string) string {
+	return fmt.Sprintf("SELECT /*!40001 SQL_NO_CACHE */ %s FROM `%s`.`%s` WHERE %s",
+		columns, schema, table, where)
+}
+
+func (t *TableDiff) getSourceRow(ctx context.Context, columns, where string, args []interface{}) (map[string][]byte, map[string]bool, error) {
+	for _, sourceTable := range t.SourceTables {
+		query := getQuerySQL(ctx, sourceTable.Schema, sourceTable.Table, columns, where)
+		log.Infof("query %v, args: %v, from: source", query, args)
+		data, null, err := getRow(ctx, sourceTable.Conn, query, args)
+		if err != nil {
+			return nil, nil, err
+		}
+
+		if data != nil {
+			return data, null, nil
+		}
+	}
+
+	return nil, nil, nil
+}
+
+func getRow(ctx context.Context, db *sql.DB, query string, args []interface{}) (map[string][]byte, map[string]bool, error) {
+	rows, err := db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		data, null, err := dbutil.ScanRow(rows)
+		if err != nil {
+			return nil, nil, errors.Trace(err)
+		}
+
+		return data, null, nil
+	}
+
+	return nil, nil, nil
 }
 
 func (t *TableDiff) getSourceTableChecksum(ctx context.Context, job *CheckJob) (int64, error) {
@@ -211,7 +445,7 @@ func (t *TableDiff) getSourceTableChecksum(ctx context.Context, job *CheckJob) (
 }
 
 func (t *TableDiff) checkChunkDataEqual(ctx context.Context, checkJobs []*CheckJob) (bool, error) {
-	equal := true
+	//equal := true
 	if len(checkJobs) == 0 {
 		return true, nil
 	}
@@ -237,32 +471,87 @@ func (t *TableDiff) checkChunkDataEqual(ctx context.Context, checkJobs []*CheckJ
 		}
 
 		// if checksum is not equal or don't need compare checksum, compare the data
-		sourceRows := make(map[string]*sql.Rows)
-		for i, sourceTable := range t.SourceTables {
-			rows, _, err := getChunkRows(ctx, sourceTable.Conn, sourceTable.Schema, sourceTable.Table, sourceTable.info, job.Where, job.Args, SliceToMap(t.IgnoreColumns), t.Collation)
+		/*
+			sourceRows := make(map[string]*sql.Rows)
+			for i, sourceTable := range t.SourceTables {
+				rows, _, err := getChunkRows(ctx, sourceTable.Conn, sourceTable.Schema, sourceTable.Table, sourceTable.info, job.Where, job.Args, SliceToMap(t.IgnoreColumns), t.Collation)
+				if err != nil {
+					return false, errors.Trace(err)
+				}
+				sourceRows[fmt.Sprintf("source-%d", i)] = rows
+			}
+
+			targetRows, orderKeyCols, err := getChunkRows(ctx, t.TargetTable.Conn, t.TargetTable.Schema, t.TargetTable.Table, t.TargetTable.info, job.Where, job.Args, SliceToMap(t.IgnoreColumns), t.Collation)
+		*/
+		//sourceChecksums := make(map[string]int64)
+
+		targetChecksums, err := getChunkChecksums(ctx, t.TargetTable.Conn, t.TargetTable.Schema, t.TargetTable.Table, t.TargetTable.info, job.Where, job.Args, SliceToMap(t.IgnoreColumns))
+		if err != nil {
+			return false, errors.Trace(err)
+		}
+
+		//sourceChecksums := make(map[string]int64)
+		for _, sourceTable := range t.SourceTables {
+			checksums, err := getChunkChecksums(ctx, sourceTable.Conn, sourceTable.Schema, sourceTable.Table, sourceTable.info, job.Where, job.Args, SliceToMap(t.IgnoreColumns))
 			if err != nil {
 				return false, errors.Trace(err)
 			}
-			sourceRows[fmt.Sprintf("source-%d", i)] = rows
+			removeSameChecksum(checksums, targetChecksums)
+
+			t.Lock()
+			for k, c := range checksums {
+				t.sourceChecksums[k] = c
+			}
+			t.Unlock()
 		}
 
-		targetRows, orderKeyCols, err := getChunkRows(ctx, t.TargetTable.Conn, t.TargetTable.Schema, t.TargetTable.Table, t.TargetTable.info, job.Where, job.Args, SliceToMap(t.IgnoreColumns), t.Collation)
-		if err != nil {
-			return false, errors.Trace(err)
+		t.Lock()
+		for k, c := range targetChecksums {
+			t.targetChecksums[k] = c
 		}
 
-		eq, err := t.compareRows(sourceRows, targetRows, orderKeyCols)
-		if err != nil {
-			return false, errors.Trace(err)
-		}
+		removeSameChecksum(t.sourceChecksums, t.targetChecksums)
+		t.Unlock()
 
-		// if equal is false, we continue check data, we should find all the different data just run once
-		if !eq {
-			equal = false
-		}
+		/*
+			sourceRows := make(map[string]*sql.Rows)
+			for i, sourceTable := range t.SourceTables {
+				rows, _, err := getChunkRows(ctx, sourceTable.Conn, sourceTable.Schema, sourceTable.Table, sourceTable.info, job.Where, job.Args, SliceToMap(t.IgnoreColumns), t.Collation)
+				if err != nil {
+					return false, errors.Trace(err)
+				}
+				sourceRows[fmt.Sprintf("source-%d", i)] = rows
+			}
+
+			targetRows, orderKeyCols, err := getChunkRows(ctx, t.TargetTable.Conn, t.TargetTable.Schema, t.TargetTable.Table, t.TargetTable.info, job.Where, job.Args, SliceToMap(t.IgnoreColumns), t.Collation)
+			if err != nil {
+				return false, errors.Trace(err)
+			}
+
+			eq, err := t.compareRows(sourceRows, targetRows, orderKeyCols)
+			if err != nil {
+				return false, errors.Trace(err)
+			}
+
+			// if equal is false, we continue check data, we should find all the different data just run once
+			if !eq {
+				equal = false
+			}
+		*/
 	}
 
-	return equal, nil
+	return true, nil
+}
+
+func removeSameChecksum(sourceChecksums, targetChecksums map[string]int64) {
+	for key, checksum1 := range sourceChecksums {
+		if checksum2, ok := targetChecksums[key]; ok {
+			if checksum1 == checksum2 {
+				delete(sourceChecksums, key)
+				delete(targetChecksums, key)
+			}
+		}
+	}
 }
 
 func (t *TableDiff) compareRows(sourceRows map[string]*sql.Rows, targetRows *sql.Rows, orderKeyCols []*model.ColumnInfo) (bool, error) {
@@ -512,6 +801,14 @@ func compareData(map1, map2 map[string][]byte, null1, null2 map[string]bool, ord
 	}
 
 	return false, cmp, nil
+}
+
+func getChunkChecksums(ctx context.Context, db *sql.DB, schema, table string, tableInfo *model.TableInfo, where string,
+	args []interface{}, ignoreColumns map[string]interface{}) (map[string]int64, error) {
+
+	orderKeys, _ := dbutil.SelectUniqueOrderKey(tableInfo)
+
+	return dbutil.GetCRC32Checksums(ctx, db, schema, table, orderKeys, tableInfo, where, args, ignoreColumns)
 }
 
 func getChunkRows(ctx context.Context, db *sql.DB, schema, table string, tableInfo *model.TableInfo, where string,
