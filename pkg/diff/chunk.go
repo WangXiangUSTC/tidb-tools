@@ -353,11 +353,12 @@ func (s *bucketSpliter) getChunksByBuckets() ([]*chunkRange, error) {
 			chunkNum    int64
 			lowerValues []string
 			upperValues []string
+			latestCount int64
 		)
 
 		for i, bucket := range buckets {
 			upperValues = s.getValues(bucket.UpperBound)
-			if int(bucket.Count) > (int(chunkNum)+1)*s.chunkSize || i == len(buckets)-1 {
+			if bucket.Count-latestCount > int64(s.chunkSize) || i == len(buckets)-1 {
 				// create a new chunk
 				chunk := newChunkRange()
 				for j, col := range index.Columns {
@@ -375,8 +376,13 @@ func (s *bucketSpliter) getChunksByBuckets() ([]*chunkRange, error) {
 				}
 				chunks = append(chunks, chunk)
 				lowerValues = upperValues
+				latestCount = bucket.Count
 				chunkNum++
 			}
+		}
+
+		if len(chunks) != 0 {
+			break
 		}
 	}
 
