@@ -60,6 +60,10 @@ func (c *chunkRange) toString(collation string) (string, []interface{}) {
 		}
 	}
 
+	if len(conditions) == 0 {
+		return "true", nil
+	}
+
 	return strings.Join(conditions, " AND "), args
 }
 
@@ -361,12 +365,14 @@ func (s *bucketSpliter) getChunksByBuckets() ([]*chunkRange, error) {
 		indexColumns := s.getColumns(index, s.table.info)
 
 		for i, bucket := range buckets {
-			if i == 0 {
-				lowerValues, err = s.getValues(bucket.LowerBound, indexColumns)
-				if err != nil {
-					return nil, errors.Trace(err)
+			/*
+				if i == 0 {
+					lowerValues, err = s.getValues(bucket.LowerBound, indexColumns)
+					if err != nil {
+						return nil, errors.Trace(err)
+					}
 				}
-			}
+			*/
 
 			upperValues, err = s.getValues(bucket.UpperBound, indexColumns)
 			if err != nil {
@@ -425,12 +431,12 @@ func (s *bucketSpliter) getValues(valueString string, cols []*model.ColumnInfo) 
 
 	for i, col := range cols {
 		if dbutil.IsTimeType(col.Tp) {
-			value, err := dbutil.FromPackedUint(values[i], col.Tp)
+			v := strings.Trim(values[i], " ")
+			value, err := dbutil.FromPackedUint(v, col.Tp)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
 
-			//log.Infof("before transform: %s, after: %s", values[i], value)
 			values[i] = value
 		}
 	}

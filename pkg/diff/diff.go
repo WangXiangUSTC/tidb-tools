@@ -229,8 +229,11 @@ CheckResult:
 	}
 
 	//removeSameChecksum(t.sourceChecksums, t.targetChecksums)
-	log.Infof("source checksums length: %d", len(t.sourceChecksums))
-	log.Infof("target checksums length: %d", len(t.targetChecksums))
+	if len(t.sourceChecksums) != 0 || len(t.targetChecksums) != 0 {
+		log.Infof("source checksums length: %d", len(t.sourceChecksums))
+		log.Infof("target checksums length: %d", len(t.targetChecksums))
+	}
+
 	return t.generateFixSQL(ctx)
 	// TODO: add count check.
 	//count1, err := dbutil.GetRowCount(ctx, t.)
@@ -327,10 +330,8 @@ func (t *TableDiff) generateFixSQL(ctx context.Context) (bool, error) {
 		t.RUnlock()
 		if ok {
 			if checksum1 == checksum2 {
-				t.Lock()
 				delete(t.sourceChecksums, key)
 				delete(t.targetChecksums, key)
-				t.Unlock()
 				continue
 			} else {
 				// generate update sql
