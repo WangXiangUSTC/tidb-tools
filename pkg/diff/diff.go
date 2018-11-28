@@ -202,8 +202,10 @@ func (t *TableDiff) EqualTableData(ctx context.Context) (bool, error) {
 			eq, err := t.checkChunkDataEqual(ctx, checkJobs)
 			if err != nil {
 				log.Errorf("check chunk data equal failed, error %v", errors.ErrorStack(err))
+				checkResultCh <- false
+			} else {
+				checkResultCh <- eq
 			}
-			checkResultCh <- eq
 		}(checkJobs)
 	}
 

@@ -327,10 +327,11 @@ func (s *bucketSpliter) split(table *TableInstance, columns []*model.ColumnInfo,
 	s.collation = collation
 	s.sample = sample
 
-	buckets, err := dbutil.GetBucketsInfo(context.Background(), s.table.Conn, s.table.Schema, s.table.Table)
+	buckets, err := dbutil.GetBucketsInfo(context.Background(), s.table.Conn, s.table.Schema, s.table.Table, s.table.info)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+
 	s.buckets = buckets
 
 	return s.getChunksByBuckets()
@@ -354,11 +355,26 @@ func (s *bucketSpliter) getChunksByBuckets() ([]*chunkRange, error) {
 			lowerValues []string
 			upperValues []string
 			latestCount int64
+			err         error
 		)
 
+		indexColumns := s.getColumns(index, s.table.info)
+
 		for i, bucket := range buckets {
-			upperValues = s.getValues(bucket.UpperBound)
+			if i == 0 {
+				lowerValues, err = s.getValues(bucket.LowerBound, indexColumns)
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
+			}
+
+			upperValues, err = s.getValues(bucket.UpperBound, indexColumns)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+
 			if bucket.Count-latestCount > int64(s.chunkSize) || i == len(buckets)-1 {
+				//log.Infof("create a new bucket, i: %d, len(buckets): %d， lowerValues: %v", i, len(buckets), lowerValues)
 				// create a new chunk
 				chunk := newChunkRange()
 				for j, col := range index.Columns {
@@ -389,10 +405,37 @@ func (s *bucketSpliter) getChunksByBuckets() ([]*chunkRange, error) {
 	return chunks, nil
 }
 
+func (s *bucketSpliter) getColumns(index *model.IndexInfo, tableInfo *model.TableInfo) []*model.ColumnInfo {
+	indexColumns := make([]*model.ColumnInfo, 0, len(index.Columns))
+	for _, indexColumn := range index.Columns {
+		for _, column := range s.table.info.Columns {
+			if column.Name.O == indexColumn.Name.O {
+				indexColumns = append(indexColumns, column)
+			}
+		}
+	}
+
+	return indexColumns
+}
+
 // upperBound and lowerBound are looks like '(123, abc)' for multiple fields, or '123' for one field.
-func (s *bucketSpliter) getValues(valueString string) []string {
+func (s *bucketSpliter) getValues(valueString string, cols []*model.ColumnInfo) ([]string, error) {
 	vStr := strings.Trim(strings.Trim(valueString, "("), ")")
-	return strings.Split(vStr, ",")
+	values := strings.Split(vStr, ",")
+
+	for i, col := range cols {
+		if dbutil.IsTimeType(col.Tp) {
+			value, err := dbutil.FromPackedUint(values[i], col.Tp)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+
+			//log.Infof("before transform: %s, after: %s", values[i], value)
+			values[i] = value
+		}
+	}
+
+	return values, nil
 }
 
 // CheckJob is the struct of job for check
