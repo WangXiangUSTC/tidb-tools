@@ -234,7 +234,8 @@ CheckResult:
 		log.Infof("target checksums length: %d", len(t.targetChecksums))
 	}
 
-	return t.generateFixSQL(ctx)
+	_, err = t.generateFixSQL(ctx)
+	return equal, err
 	// TODO: add count check.
 	//count1, err := dbutil.GetRowCount(ctx, t.)
 }
@@ -490,6 +491,7 @@ func (t *TableDiff) checkChunkDataEqual(ctx context.Context, checkJobs []*CheckJ
 			if err != nil {
 				return false, errors.Trace(err)
 			}
+
 			if sourceChecksum == targetChecksum {
 				log.Infof("table: %s, range: %s, args: %v, checksum is equal, checksum: %d", job.Table, job.Where, job.Args, sourceChecksum)
 				continue
