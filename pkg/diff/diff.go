@@ -330,8 +330,10 @@ func (t *TableDiff) generateFixSQL(ctx context.Context) (bool, error) {
 		t.RUnlock()
 		if ok {
 			if checksum1 == checksum2 {
+				t.Lock()
 				delete(t.sourceChecksums, key)
 				delete(t.targetChecksums, key)
+				t.Unlock()
 				continue
 			} else {
 				// generate update sql
