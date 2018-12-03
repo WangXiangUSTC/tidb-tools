@@ -234,8 +234,7 @@ CheckResult:
 		log.Infof("target checksums length: %d", len(t.targetChecksums))
 	}
 
-	_, err = t.generateFixSQL(ctx)
-	return equal, err
+	return t.generateFixSQL(ctx)
 	// TODO: add count check.
 	//count1, err := dbutil.GetRowCount(ctx, t.)
 }
@@ -250,6 +249,7 @@ func keyToArgs(key string) []interface{} {
 }
 
 func (t *TableDiff) generateFixSQL(ctx context.Context) (bool, error) {
+	dataEqual := true
 	sourceChecksums := make(map[string]int64)
 	t.Lock()
 	for k, v := range t.sourceChecksums {
@@ -321,7 +321,7 @@ func (t *TableDiff) generateFixSQL(ctx context.Context) (bool, error) {
 		equal = false
 		t.wg.Add(1)
 		t.sqlCh <- sql
-
+		dataEqual = false
 		return
 	}
 
@@ -388,7 +388,8 @@ func (t *TableDiff) generateFixSQL(ctx context.Context) (bool, error) {
 		return false, selectErr
 	}
 
-	return equal, nil
+	log.Infof("data equal: %v", dataEqual)
+	return dataEqual, nil
 }
 
 func getItems(ctx context.Context, tableInfo *model.TableInfo, ignoreColumns map[string]interface{}) (string, string) {

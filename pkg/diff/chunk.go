@@ -38,6 +38,13 @@ type chunkRange struct {
 	columns []string
 	bounds  [][]string
 	symbols [][]string
+
+	//lowerConditions string
+	//lowerArgs       []string
+
+	//upperConditions string
+	//upperArgs       []string
+	conditions string
 }
 
 // newChunkRange return a range struct
@@ -50,6 +57,10 @@ func newChunkRange() *chunkRange {
 }
 
 func (c *chunkRange) toString(collation string) (string, []interface{}) {
+	if len(c.conditions) != 0 {
+		return c.conditions, nil
+	}
+
 	conditions := make([]string, 0, 2)
 	args := make([]interface{}, 0, 2)
 
@@ -383,9 +394,10 @@ func (s *bucketSpliter) getChunksByBuckets() ([]*chunkRange, error) {
 				//log.Infof("create a new bucket, i: %d, len(buckets): %d， lowerValues: %v", i, len(buckets), lowerValues)
 				// create a new chunk
 				chunk := newChunkRange()
+				var symbols []string
 				for j, col := range index.Columns {
 					values := make([]string, 0, 2)
-					symbols := make([]string, 0, 2)
+					symbols = make([]string, 0, 2)
 					if len(lowerValues) != 0 {
 						values = append(values, lowerValues[j])
 						symbols = append(symbols, gt)
@@ -396,6 +408,26 @@ func (s *bucketSpliter) getChunksByBuckets() ([]*chunkRange, error) {
 					}
 					chunk = chunk.update(col.Name.O, values, symbols)
 				}
+
+				//log.Infof(s.boundToBucket(lowerValues, upperValues, indexColumns, symbols))
+				/*
+					lowerBound := ""
+					preCondition := ""
+					for _, value := range lowerValues {
+						preCondition =
+					}
+
+					upperBound := ""
+					for _, value := range upperValues {
+
+					}
+				*/
+				if i != len(buckets)-1 {
+					chunk.conditions = s.boundToBucket(lowerValues, upperValues, indexColumns, symbols)
+				} else {
+					chunk.conditions = s.boundToBucket(lowerValues, nil, indexColumns, symbols)
+				}
+				log.Infof(chunk.conditions)
 				chunks = append(chunks, chunk)
 				lowerValues = upperValues
 				latestCount = bucket.Count
@@ -427,12 +459,12 @@ func (s *bucketSpliter) getColumns(index *model.IndexInfo, tableInfo *model.Tabl
 // upperBound and lowerBound are looks like '(123, abc)' for multiple fields, or '123' for one field.
 func (s *bucketSpliter) getValues(valueString string, cols []*model.ColumnInfo) ([]string, error) {
 	vStr := strings.Trim(strings.Trim(valueString, "("), ")")
-	values := strings.Split(vStr, ",")
+	values := strings.Split(vStr, ", ")
 
 	for i, col := range cols {
+		//v := strings.Trim(values[i], " ")
 		if dbutil.IsTimeType(col.Tp) {
-			v := strings.Trim(values[i], " ")
-			value, err := dbutil.FromPackedUint(v, col.Tp)
+			value, err := dbutil.FromPackedUint(values[i], col.Tp)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -442,6 +474,55 @@ func (s *bucketSpliter) getValues(valueString string, cols []*model.ColumnInfo) 
 	}
 
 	return values, nil
+}
+
+// (a > v1 || (a == v1 and b >= v2)) && (a < v3 || (a == v3 && a <= v4))
+func (s *bucketSpliter) boundToBucket(lowerBound, upperBound []string, columns []*model.ColumnInfo, symbols []string) string {
+	// TODO: need use collate
+	lowerCondition := make([]string, 0, 1)
+	//lowerArgs := make([]string, 0, 1)
+	upperCondition := make([]string, 0, 1)
+	//upperArgs := make([]string, 0, 1)
+
+	preCondition := make([]string, 0, 1)
+	//preConditionArgs := make([]string, 0, 1)
+
+	log.Infof("lower: %v, upper: %v, symbols: %v", lowerBound, upperBound, symbols)
+	symbol := symbols[0]
+
+	for i, value := range lowerBound {
+		if len(preCondition) > 0 {
+			lowerCondition = append(lowerCondition, fmt.Sprintf("(%s AND %s %s '%s')", strings.Join(preCondition, " AND "), columns[i].Name.O, symbol, value))
+		} else {
+			lowerCondition = append(lowerCondition, fmt.Sprintf("(%s %s '%s')", columns[i].Name.O, symbol, value))
+		}
+
+		preCondition = append(preCondition, fmt.Sprintf("%s = '%s'", columns[i].Name.O, value))
+		//preConditionArgs = append(preConditionArgs, lowerValues[i])
+	}
+
+	symbol = symbols[len(symbols)-1]
+
+	preCondition = make([]string, 0, 1)
+	for i, value := range upperBound {
+		if len(preCondition) > 0 {
+			upperCondition = append(upperCondition, fmt.Sprintf("(%s AND %s %s '%s')", strings.Join(preCondition, " AND "), columns[i].Name.O, symbol, value))
+		} else {
+			upperCondition = append(upperCondition, fmt.Sprintf("(%s %s '%s')", columns[i].Name.O, symbol, value))
+		}
+
+		preCondition = append(preCondition, fmt.Sprintf("%s = '%s'", columns[i].Name.O, value))
+	}
+
+	if len(upperCondition) == 0 {
+		return strings.Join(lowerCondition, " OR ")
+	}
+
+	if len(lowerCondition) == 0 {
+		return strings.Join(upperCondition, " OR ")
+	}
+
+	return fmt.Sprintf("(%s) AND (%s)", strings.Join(lowerCondition, " OR "), strings.Join(upperCondition, " OR "))
 }
 
 // CheckJob is the struct of job for check
