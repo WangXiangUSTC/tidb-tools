@@ -362,7 +362,12 @@ func (s *bucketSpliter) getChunksByBuckets() ([]*chunkRange, error) {
 		}
 		buckets, ok := s.buckets[index.Name.O]
 		if !ok {
-			return nil, errors.NotFoundf("index %s in buckets info", index.Name.O)
+			var ok2 bool
+			buckets, ok2 = s.buckets[index.Columns[0].Name.O]
+			if !ok2 {
+				return nil, errors.NotFoundf("index %s in buckets info", index.Name.O)
+			}
+			log.Infof("use buckets with column name %s", index.Columns[0].Name.O)
 		}
 
 		var (
@@ -409,25 +414,12 @@ func (s *bucketSpliter) getChunksByBuckets() ([]*chunkRange, error) {
 					chunk = chunk.update(col.Name.O, values, symbols)
 				}
 
-				//log.Infof(s.boundToBucket(lowerValues, upperValues, indexColumns, symbols))
-				/*
-					lowerBound := ""
-					preCondition := ""
-					for _, value := range lowerValues {
-						preCondition =
-					}
-
-					upperBound := ""
-					for _, value := range upperValues {
-
-					}
-				*/
 				if i != len(buckets)-1 {
 					chunk.conditions = s.boundToBucket(lowerValues, upperValues, indexColumns, symbols)
 				} else {
 					chunk.conditions = s.boundToBucket(lowerValues, nil, indexColumns, symbols)
 				}
-				log.Infof(chunk.conditions)
+				//log.Infof(chunk.conditions)
 				chunks = append(chunks, chunk)
 				lowerValues = upperValues
 				latestCount = bucket.Count

@@ -459,7 +459,9 @@ func GetBucketsInfo(ctx context.Context, db *sql.DB, schema, table string, table
 		})
 	}
 
+	//log.Infof("buckets: %v", buckets)
 	// when primary key is int type, the columnName will be column's name, not `PRIMARY`, check and transform here.
+
 	indices := FindAllIndex(tableInfo)
 	for _, index := range indices {
 		if index.Name.O != "PRIMARY" {
@@ -472,6 +474,7 @@ func GetBucketsInfo(ctx context.Context, db *sql.DB, schema, table string, table
 				return nil, errors.NotFoundf("primary key on %s in buckets info", index.Columns[0].Name.O)
 			}
 
+			log.Infof("use index name %s to instead %s", index.Name.O, index.Columns[0].Name.O)
 			buckets[index.Name.O] = buckets[index.Columns[0].Name.O]
 			delete(buckets, index.Columns[0].Name.O)
 		}
