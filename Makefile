@@ -1,4 +1,4 @@
-.PHONY: build importer checker dump_region binlogctl sync_diff_inspector ddl_checker test check deps
+.PHONY: build importer checker dump_region binlogctl sync_diff_inspector ddl_checker test check deps kafka-test
 
 # Ensure GOPATH is set before running build process.
 ifeq "$(GOPATH)" ""
@@ -46,6 +46,9 @@ sync_diff_inspector:
 
 ddl_checker:
 	$(GO) build -ldflags '$(LDFLAGS)' -o bin/ddl_checker ./ddl_checker
+
+kafka-test:
+	$(GO) build -ldflags '$(LDFLAGS)' -o bin/kafka-test ./kafka-test
 
 test:
 	@export log_level=error; \
