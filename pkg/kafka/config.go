@@ -1,13 +1,18 @@
 package kafka
 
 import (
-	"crypto/tls"
 	"net"
 	"time"
 
 	"github.com/BurntSushi/toml"
 	"github.com/Shopify/sarama"
 	log "github.com/sirupsen/logrus"
+)
+
+var (
+	MinVersion = "V0.8.2.0"
+
+	defaultClientID = "sarama"
 )
 
 // Config is used to pass multiple configuration options to Sarama's constructors.
@@ -32,10 +37,10 @@ type Config struct {
 
 	// Whether or not to use TLS when connecting to the broker
 	// (defaults to false).
-	NetTSLEnable bool `toml:"net-tsl-enable"`
+	// NetTSLEnable bool `toml:"net-tsl-enable"`
 	// The TLS configuration to use for secure connections if
 	// enabled (defaults to nil).
-	NetTSLConfig *tls.Config
+	// NetTSLConfig *tls.Config
 
 	// SASL based authentication with broker. While there are multiple SASL authentication methods
 	// the current implementation is limited to plaintext (SASL/PLAIN) authentication
@@ -260,7 +265,7 @@ type Config struct {
 	// be between `MaxProcessingTime` and `2 * MaxProcessingTime`. For
 	// example, if `MaxProcessingTime` is 100ms then a delay of 180ms
 	// between two messages being sent may not be recognized as a timeout.
-	MaxProcessingTime int `toml:"max-processing-time"`
+	ConsumerMaxProcessingTime int `toml:"consumer-max-processing-time"`
 
 	// Return specifies what channels will be populated. If they are set to true,
 	// you must read from them to prevent deadlock.
@@ -318,10 +323,75 @@ type Config struct {
 
 // NewConfig returns a new sarama Config
 func NewConfig(cfgFile string) *sarama.Config {
-	c := new(Config)
-	c.ClientID = "abc"
+	c := &Config{}
+
+	// reference: https://github.com/Shopify/sarama/blob/97315fefd9d1a91fbc682c52c44fcb490fa5c6e7/config.go#L343
+	c.AdminTimeout = 3 // time.Second
+
+	c.NetMaxOpenRequests = 5
+	c.NetDialTimeout = 30  // time.Second
+	c.NetReadTimeout = 30  // time.Second
+	c.NetWriteTimeout = 30 // time.Second
+	c.NetSASLHandshake = true
+
+	c.MetadataRetryMax = 3
+	c.MetadataRetryBackoff = 250    // time.Millisecond
+	c.MetadataRefreshFrequency = 10 // time.Minute
+	c.MetadataFull = true
+
+	c.ProducerMaxMessageBytes = 1000000
+	c.ProducerRequiredAcks = int(sarama.WaitForLocal)
+	c.ProducerTimeout = 10 // time.Second
+	c.ProducerRetryMax = 3
+	c.ProducerRetryBackoff = 100 // time.Millisecond
+	c.ProducerReturnErrors = true
+	c.ProducerCompressionLevel = sarama.CompressionLevelDefault
+
+	c.ConsumerFetchMin = 1
+	c.ConsumerFetchDefault = 1024 * 1024
+	c.ConsumerRetryBackoff = 2        // time.Second
+	c.ConsumerMaxWaitTime = 250       // time.Millisecond
+	c.ConsumerMaxProcessingTime = 100 // time.Millisecond
+	c.ConsumerReturnErrors = false
+	c.ConsumerOffsetsCommitInterval = 1 // time.Second
+	c.ConsumerOffsetsInitial = sarama.OffsetNewest
+	c.ConsumerOffsetsRetryMax = 3
+
+	c.ConsumerGroupSessionTimeout = 10   // time.Second
+	c.ConsumerGroupHeartbeatInterval = 3 // time.Second
+	c.ConsumerGroupRebalanceTimeout = 60 // time.Second
+	c.ConsumerGroupRebalanceRetryMax = 4
+	c.ConsumerGroupRebalanceRetryBackoff = 2 // time.Second
+
+	c.ClientID = defaultClientID
+	c.ChannelBufferSize = 256
+	c.Version = MinVersion
+
 	_, _ = toml.DecodeFile(cfgFile, c)
 
 	log.Infof("config: %v", c)
 	return sarama.NewConfig()
+}
+
+func (c *Config) transformToSaramaConfig() *sarama.Config {
+	sCfg := sarama.NewConfig()
+
+	sCfg.Admin.Timeout = time.Duration(c.AdminTimeout) * time.Second
+	sCfg.Net.MaxOpenRequests = c.NetMaxOpenRequests
+	sCfg.Net.DialTimeout = time.Duration(c.NetDialTimeout) * time.Second
+	sCfg.Net.ReadTimeout = time.Duration(c.NetReadTimeout) * time.Second
+	sCfg.Net.WriteTimeout = time.Duration(c.NetWriteTimeout) * time.Second
+	sCfg.Net.SASL.Enable = c.NetSASLEnable
+	sCfg.Net.SASL.Handshake = c.NetSASLHandshake
+	sCfg.Net.SASL.Password = c.NetSASLPassword
+	sCfg.Net.SASL.User = c.NetSASLUser
+	sCfg.Net.KeepAlive = time.Duration(c.NetKeepAlive) * time.Second
+	// TODO: sCfg.Net.LocalAddr =
+
+	sCfg.Metadata.Retry.Backoff = time.Duration(c.MetadataRetryBackoff) * time.Second
+	sCfg.Metadata.Retry.Max = c.MetadataRetryMax
+	sCfg.Metadata.Full = c.MetadataFull
+	sCfg.Metadata.RefreshFrequency = time.Duration(c.MetadataRefreshFrequency) * time.Second
+
+	return sCfg
 }
