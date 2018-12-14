@@ -1,16 +1,15 @@
 package kafka
 
 import (
-	"net"
 	"time"
 
 	"github.com/BurntSushi/toml"
 	"github.com/Shopify/sarama"
-	log "github.com/sirupsen/logrus"
+	"github.com/pingcap/errors"
 )
 
 var (
-	MinVersion = "V0.8.2.0"
+	MinVersion = "0.8.2.0"
 
 	defaultClientID = "sarama"
 )
@@ -40,7 +39,7 @@ type Config struct {
 	// NetTSLEnable bool `toml:"net-tsl-enable"`
 	// The TLS configuration to use for secure connections if
 	// enabled (defaults to nil).
-	// NetTSLConfig *tls.Config
+	// TODO: NetTSLConfig *tls.Config
 
 	// SASL based authentication with broker. While there are multiple SASL authentication methods
 	// the current implementation is limited to plaintext (SASL/PLAIN) authentication
@@ -63,7 +62,7 @@ type Config struct {
 	// address. The address must be of a compatible type for the
 	// network being dialed.
 	// If nil, a local address is automatically chosen.
-	NetLocalAddr net.Addr
+	// TODO: NetLocalAddr net.Addr
 
 	// Metadata is the namespace for metadata management properties used by the
 	// Client, and shared by the Producer/Consumer.
@@ -131,7 +130,7 @@ type Config struct {
 
 	// If enabled, the producer will ensure that exactly one copy of each message is
 	// written.
-	ProducerIdempotent bool `toml:"producer-idempotent"`
+	// TODO: ProducerIdempotent bool `toml:"producer-idempotent"`
 
 	// Return specifies what channels will be populated. If they are set to true,
 	// you must read from the respective channels to prevent deadlock. If,
@@ -318,11 +317,11 @@ type Config struct {
 	// If you want to disable metrics gathering, set "metrics.UseNilMetrics" to "true"
 	// prior to starting Sarama.
 	// See Examples on how to use the metrics registry
-	// MetricRegistry metrics.Registry
+	// TODO: MetricRegistry metrics.Registry
 }
 
 // NewConfig returns a new sarama Config
-func NewConfig(cfgFile string) *sarama.Config {
+func NewConfig(cfgFile string) (*sarama.Config, error) {
 	c := &Config{}
 
 	// reference: https://github.com/Shopify/sarama/blob/97315fefd9d1a91fbc682c52c44fcb490fa5c6e7/config.go#L343
@@ -368,15 +367,14 @@ func NewConfig(cfgFile string) *sarama.Config {
 	c.Version = MinVersion
 
 	_, _ = toml.DecodeFile(cfgFile, c)
-
-	log.Infof("config: %v", c)
-	return sarama.NewConfig()
+	return c.transformToSaramaConfig()
 }
 
-func (c *Config) transformToSaramaConfig() *sarama.Config {
+func (c *Config) transformToSaramaConfig() (*sarama.Config, error) {
 	sCfg := sarama.NewConfig()
 
 	sCfg.Admin.Timeout = time.Duration(c.AdminTimeout) * time.Second
+
 	sCfg.Net.MaxOpenRequests = c.NetMaxOpenRequests
 	sCfg.Net.DialTimeout = time.Duration(c.NetDialTimeout) * time.Second
 	sCfg.Net.ReadTimeout = time.Duration(c.NetReadTimeout) * time.Second
@@ -386,12 +384,52 @@ func (c *Config) transformToSaramaConfig() *sarama.Config {
 	sCfg.Net.SASL.Password = c.NetSASLPassword
 	sCfg.Net.SASL.User = c.NetSASLUser
 	sCfg.Net.KeepAlive = time.Duration(c.NetKeepAlive) * time.Second
-	// TODO: sCfg.Net.LocalAddr =
 
-	sCfg.Metadata.Retry.Backoff = time.Duration(c.MetadataRetryBackoff) * time.Second
+	sCfg.Metadata.Retry.Backoff = time.Duration(c.MetadataRetryBackoff) * time.Millisecond
 	sCfg.Metadata.Retry.Max = c.MetadataRetryMax
 	sCfg.Metadata.Full = c.MetadataFull
-	sCfg.Metadata.RefreshFrequency = time.Duration(c.MetadataRefreshFrequency) * time.Second
+	sCfg.Metadata.RefreshFrequency = time.Duration(c.MetadataRefreshFrequency) * time.Minute
 
-	return sCfg
+	sCfg.Producer.MaxMessageBytes = c.ProducerMaxMessageBytes
+	sCfg.Producer.RequiredAcks = sarama.RequiredAcks(c.ProducerRequiredAcks)
+	sCfg.Producer.Timeout = time.Duration(c.ProducerTimeout) * time.Second
+	sCfg.Producer.Compression = sarama.CompressionCodec(c.ProducerCompression)
+	sCfg.Producer.CompressionLevel = c.ProducerCompressionLevel
+	sCfg.Producer.Return.Successes = c.ProducerReturnSuccesses
+	sCfg.Producer.Return.Errors = c.ProducerReturnErrors
+	sCfg.Producer.Flush.Bytes = c.ProducerFlushBytes
+	sCfg.Producer.Flush.Frequency = time.Duration(c.ProducerFlushFrequency) * time.Second
+	sCfg.Producer.Flush.MaxMessages = c.ProducerFlushMaxMessages
+	sCfg.Producer.Flush.Messages = c.ProducerFlushMessages
+	sCfg.Producer.Retry.Backoff = time.Duration(c.ProducerRetryBackoff) * time.Millisecond
+
+	sCfg.Consumer.Group.Session.Timeout = time.Duration(c.ConsumerGroupSessionTimeout) * time.Second
+	sCfg.Consumer.Group.Heartbeat.Interval = time.Duration(c.ConsumerGroupHeartbeatInterval) * time.Second
+	sCfg.Consumer.Group.Rebalance.Timeout = time.Duration(c.ConsumerGroupRebalanceTimeout) * time.Second
+	sCfg.Consumer.Group.Rebalance.Retry.Max = c.ConsumerGroupRebalanceRetryMax
+	sCfg.Consumer.Group.Rebalance.Retry.Backoff = time.Duration(c.ConsumerGroupRebalanceRetryBackoff) * time.Second
+	sCfg.Consumer.Group.Member.UserData = []byte(c.ConsumerGroupMemberUserData)
+
+	sCfg.Consumer.Retry.Backoff = time.Duration(c.ConsumerRetryBackoff) * time.Second
+	sCfg.Consumer.Fetch.Min = c.ConsumerFetchMin
+	sCfg.Consumer.Fetch.Max = c.ConsumerFetchMax
+	sCfg.Consumer.Fetch.Default = c.ConsumerFetchDefault
+	sCfg.Consumer.MaxWaitTime = time.Duration(c.ConsumerMaxWaitTime) * time.Millisecond
+	sCfg.Consumer.MaxProcessingTime = time.Duration(c.ConsumerMaxProcessingTime) * time.Millisecond
+	sCfg.Consumer.Return.Errors = c.ConsumerReturnErrors
+	sCfg.Consumer.Offsets.CommitInterval = time.Duration(c.ConsumerOffsetsCommitInterval) * time.Second
+	sCfg.Consumer.Offsets.Initial = c.ConsumerOffsetsInitial
+	sCfg.Consumer.Offsets.Retention = time.Duration(c.ConsumerOffsetsRetention) * time.Second
+	sCfg.Consumer.Offsets.Retry.Max = c.ConsumerOffsetsRetryMax
+
+	sCfg.ClientID = c.ClientID
+	sCfg.ChannelBufferSize = c.ChannelBufferSize
+
+	version, err := sarama.ParseKafkaVersion(c.Version)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	sCfg.Version = version
+
+	return sCfg, nil
 }
