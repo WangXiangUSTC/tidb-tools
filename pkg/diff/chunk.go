@@ -480,6 +480,9 @@ func (s *bucketSpliter) boundToBucket(lowerBound, upperBound []string, columns [
 	//preConditionArgs := make([]string, 0, 1)
 
 	//log.Infof("lower: %v, upper: %v, symbols: %v", lowerBound, upperBound, symbols)
+	if len(symbols) == 0 {
+		return "true"
+	}
 	symbol := symbols[0]
 
 	for i, value := range lowerBound {
