@@ -257,7 +257,7 @@ func (t *TableDiff) generateFixSQL(ctx context.Context) (bool, error) {
 	}
 	t.Unlock()
 
-	equal := true
+	//equal := true
 	_, orderKeyCols := dbutil.SelectUniqueOrderKey(t.TargetTable.info)
 	columns, where := getItems(ctx, t.TargetTable.info, SliceToMap(t.IgnoreColumns))
 
@@ -318,7 +318,7 @@ func (t *TableDiff) generateFixSQL(ctx context.Context) (bool, error) {
 			return
 		}
 
-		equal = false
+		//equal = false
 		t.wg.Add(1)
 		t.sqlCh <- sql
 		dataEqual = false
