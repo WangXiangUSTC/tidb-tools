@@ -453,6 +453,10 @@ func (s *bucketSpliter) getValues(valueString string, cols []*model.ColumnInfo) 
 	vStr := strings.Trim(strings.Trim(valueString, "("), ")")
 	values := strings.Split(vStr, ", ")
 
+	if len(values) != len(cols) {
+		return nil, errors.Errorf("analyze value %s failed", valueString)
+	}
+
 	for i, col := range cols {
 		//v := strings.Trim(values[i], " ")
 		if dbutil.IsTimeType(col.Tp) {
