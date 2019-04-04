@@ -252,7 +252,7 @@ func (t *TableDiff) getSourceTableChecksum(ctx context.Context, job *CheckJob) (
 	var checksum int64
 
 	for _, sourceTable := range t.SourceTables {
-		checksumTmp, err := dbutil.GetCRC32Checksum(ctx, sourceTable.Conn, sourceTable.Schema, sourceTable.Table, t.TargetTable.info, job.Where, utils.StringsToInterfaces(job.Args), utils.SliceToMap(t.IgnoreColumns))
+		checksumTmp, err := dbutil.GetCRC32Checksum(ctx, sourceTable.Conn, sourceTable.Schema, sourceTable.Table, t.TargetTable.info, job.Where, utils.StringsToInterfaces(job.Args), utils.SliceToMap(t.IgnoreColumns), false)
 		if err != nil {
 			return -1, errors.Trace(err)
 		}
@@ -263,6 +263,7 @@ func (t *TableDiff) getSourceTableChecksum(ctx context.Context, job *CheckJob) (
 }
 
 func (t *TableDiff) checkChunkDataEqual(ctx context.Context, checkJobs []*CheckJob) (bool, error) {
+	log.Info("checkChunkDataEqual")
 	equal := true
 	if len(checkJobs) == 0 {
 		return true, nil
@@ -276,7 +277,7 @@ func (t *TableDiff) checkChunkDataEqual(ctx context.Context, checkJobs []*CheckJ
 				return false, errors.Trace(err)
 			}
 
-			targetChecksum, err := dbutil.GetCRC32Checksum(ctx, t.TargetTable.Conn, t.TargetTable.Schema, t.TargetTable.Table, t.TargetTable.info, job.Where, utils.StringsToInterfaces(job.Args), utils.SliceToMap(t.IgnoreColumns))
+			targetChecksum, err := dbutil.GetCRC32Checksum(ctx, t.TargetTable.Conn, t.TargetTable.Schema, t.TargetTable.Table, t.TargetTable.info, job.Where, utils.StringsToInterfaces(job.Args), utils.SliceToMap(t.IgnoreColumns), false)
 			if err != nil {
 				return false, errors.Trace(err)
 			}

@@ -342,7 +342,7 @@ func GetSchemas(ctx context.Context, db *sql.DB) ([]string, error) {
 }
 
 // GetCRC32Checksum returns checksum code of some data by given condition
-func GetCRC32Checksum(ctx context.Context, db *sql.DB, schemaName, tableName string, tbInfo *model.TableInfo, limitRange string, args []interface{}, ignoreColumns map[string]interface{}) (int64, error) {
+func GetCRC32Checksum(ctx context.Context, db *sql.DB, schemaName, tableName string, tbInfo *model.TableInfo, limitRange string, args []interface{}, ignoreColumns map[string]interface{}, castFloat bool) (int64, error) {
 	/*
 		calculate CRC32 checksum example:
 		mysql> SELECT BIT_XOR(CAST(CRC32(CONCAT_WS(',', id, name, age, CONCAT(ISNULL(id), ISNULL(name), ISNULL(age))))AS UNSIGNED)) AS checksum FROM test.test WHERE id > 0 AND id < 10;
@@ -358,7 +358,11 @@ func GetCRC32Checksum(ctx context.Context, db *sql.DB, schemaName, tableName str
 		if _, ok := ignoreColumns[col.Name.O]; ok {
 			continue
 		}
-		columnNames = append(columnNames, fmt.Sprintf("`%s`", col.Name.O))
+		if castFloat && IsFloatType(col.Tp) {
+			columnNames = append(columnNames, fmt.Sprintf("CAST(`%s` AS DECIMAL(65,3))", col.Name.O))
+		} else {
+			columnNames = append(columnNames, fmt.Sprintf("`%s`", col.Name.O))
+		}
 		columnIsNull = append(columnIsNull, fmt.Sprintf("ISNULL(`%s`)", col.Name.O))
 	}
 
