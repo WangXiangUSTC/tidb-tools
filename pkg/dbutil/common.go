@@ -471,7 +471,8 @@ func GetBucketsInfo(ctx context.Context, db *sql.DB, schema, table string, table
 		_, ok := buckets[index.Name.O]
 		if !ok && len(index.Columns) == 1 {
 			if _, ok := buckets[index.Columns[0].Name.O]; !ok {
-				return nil, errors.NotFoundf("primary key on %s in buckets info", index.Columns[0].Name.O)
+				break
+				//return nil, errors.NotFoundf("primary key on %s in buckets info", index.Columns[0].Name.O)
 			}
 
 			log.Infof("use index name %s to instead %s", index.Name.O, index.Columns[0].Name.O)
