@@ -171,19 +171,21 @@ func genUpdateSqls(table *table, db *sql.DB, count int) ([]string, [][]interface
 	return sqls, args, nil
 }
 
-func genInsertSqls(table *table, count int) ([]string, [][]interface{}, error) {
+func genInsertSqls(table *table, count int) (string, []string, error) {
+	sqlPrefix := fmt.Sprintf("insert into %s.%s values", table.schema, table.name)
+
 	datas := make([]string, 0, count)
-	args := make([][]interface{}, 0, count)
+
 	for i := 0; i < count; i++ {
 		data, err := genRowData(table)
 		if err != nil {
-			return nil, nil, errors.Trace(err)
+			return "", nil, errors.Trace(err)
 		}
 		datas = append(datas, data)
-		args = append(args, nil)
+		//args = append(args, nil)
 	}
 
-	return datas, args, nil
+	return sqlPrefix, datas, nil
 }
 
 func genWhere(columns []*column) string {
@@ -211,8 +213,9 @@ func genRowData(table *table) (string, error) {
 	}
 
 	values = values[:len(values)-1]
-	sql := fmt.Sprintf("insert into %s.%s values (%s);", table.schema, table.name, string(values))
-	return sql, nil
+	//sql := fmt.Sprintf("insert into %s.%s values (%s);", table.schema, table.name, string(values))
+	//return sql, nil
+	return fmt.Sprintf("(%s)", string(values)), nil
 }
 
 func genColumnData(table *table, column *column) (string, error) {
@@ -282,12 +285,12 @@ func genColumnData(table *table, column *column) (string, error) {
 	case mysql.TypeFloat, mysql.TypeDouble, mysql.TypeDecimal, mysql.TypeNewDecimal:
 		var data float64
 		if isUnique {
-			data = float64(uniqInt64Value(column, 0, math.MaxInt64))
+			data = float64(uniqInt64Value(column, 0, int64(math.Pow(10, float64(tp.Flen-tp.Decimal))-1)))
 		} else {
 			if isUnsigned {
-				data = float64(randInt64Value(column, 0, math.MaxInt64))
+				data = float64(randInt64Value(column, 0, int64(math.Pow(10, float64(tp.Flen-tp.Decimal))-1)))
 			} else {
-				data = float64(randInt64Value(column, math.MinInt32, math.MaxInt32))
+				data = float64(randInt64Value(column, -int64(math.Pow(10, float64(tp.Flen-tp.Decimal))-1), int64(math.Pow(10, float64(tp.Flen-tp.Decimal))-1)))
 			}
 		}
 		return strconv.FormatFloat(data, 'f', -1, 64), nil

@@ -22,40 +22,11 @@ import (
 // Run runs the daily test
 func Run(sourceDB *sql.DB, tableSQLs []string, workerCount int, jobCount int, batch int) {
 
-	/*
-		TableSQLs := []string{`
-	create table test.ptest(
-		a int primary key,
-		b double NOT NULL DEFAULT 2.0,
-		c varchar(10) NOT NULL,
-		d time unique
-	);
-	`,
-			`
-	create table test.itest(
-		a int,
-		b double NOT NULL DEFAULT 2.0,
-		c varchar(10) NOT NULL,
-		d time unique,
-		PRIMARY KEY(a, b)
-	);
-	`,
-			`
-	create table test.ntest(
-		a int,
-		b double NOT NULL DEFAULT 2.0,
-		c varchar(10) NOT NULL,
-		d time unique
-	);
-	`,
-	}
-	*/
-
 	RunTest(sourceDB, func(src *sql.DB) {
 		// generate insert/update/delete sqls and execute
 		RunDailyTest(sourceDB, tableSQLs, workerCount, jobCount, batch)
 	})
 
-	log.S().Info("test pass!!!")
+	log.S().Info("importer pass!!!")
 
 }

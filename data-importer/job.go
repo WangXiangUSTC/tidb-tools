@@ -16,12 +16,13 @@ package main
 import (
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/tidb/types"
+	//"github.com/pingcap/parser/mysql"
+	//"github.com/pingcap/tidb/types"
 )
 
 func addJobs(jobCount int, jobChan chan struct{}) {
@@ -33,52 +34,58 @@ func addJobs(jobCount int, jobChan chan struct{}) {
 }
 
 func doSqls(table *table, db *sql.DB, count int) {
-	var sqls []string
-	var args [][]interface{}
-	var err error
-
-	sql, arg, err := genDeleteSqls(table, db, count/10)
+	sqlPrefix, datas, err := genInsertSqls(table, count)
 	if err != nil {
 		log.S().Error(errors.ErrorStack(err))
-	} else {
-		sqls = append(sqls, sql...)
-		args = append(args, arg...)
+		return
 	}
 
-	sql, arg, err = genInsertSqls(table, count)
-	if err != nil {
-		log.S().Error(errors.ErrorStack(err))
-	} else {
-		sqls = append(sqls, sql...)
-		args = append(args, arg...)
+	t := time.Now()
+	defer func() {
+		log.S().Infof("insert %d datas, cost %v", len(datas), time.Since(t))
+	}()
+
+	values := strings.Join(datas, ",")
+	_, err = db.Exec(fmt.Sprintf("%s %s;", sqlPrefix, values))
+	if err == nil {
+		return
 	}
 
-	sql, arg, err = genUpdateSqls(table, db, count/10)
-	if err != nil {
-		log.S().Error(errors.ErrorStack(err))
-	} else {
-		sqls = append(sqls, sql...)
-		args = append(args, arg...)
+	log.S().Error(errors.ErrorStack(err))
+	if !strings.Contains(err.Error(), "Duplicate entry") {
+		return
 	}
 
-	execSqls(db, table.schema, sqls, args)
+	log.S().Error("have duplicate key, insert for every row")
+	for _, data := range datas {
+		_, err = db.Exec(fmt.Sprintf("%s %s;", sqlPrefix, data))
+		if err != nil {
+			log.S().Error(errors.ErrorStack(err))
+		}
+	}
 }
 
 func execSqls(db *sql.DB, schema string, sqls []string, args [][]interface{}) {
+	t := time.Now()
+	defer func() {
+		log.S().Infof("execute %d sqls, cost %v", len(sqls), time.Since(t))
+	}()
 	txn, err := db.Begin()
 	if err != nil {
 		log.S().Fatalf(errors.ErrorStack(err))
 	}
 
-	_, err = txn.Exec(fmt.Sprintf("use %s;", schema))
-	if err != nil {
-		log.S().Error(errors.ErrorStack(err))
-	}
+	/*
+		_, err = txn.Exec(fmt.Sprintf("use %s;", schema))
+		if err != nil {
+			log.S().Error(errors.ErrorStack(err))
+		}
+	*/
 
 	for i := range sqls {
 		_, err = txn.Exec(sqls[i], args[i]...)
 		if err != nil {
-			log.S().Error(errors.ErrorStack(err))
+			log.S().Errorf("sql: %s, args: %v, err: %v", sqls[i], args[i], errors.ErrorStack(err))
 		}
 	}
 
@@ -128,50 +135,10 @@ func doDMLProcess(table *table, db *sql.DB, jobCount int, workerCount int, batch
 
 }
 
-func doDDLProcess(table *table, db *sql.DB) {
-	// do drop column ddl
-	index := randInt(2, len(table.columns)-1)
-	col := table.columns[index]
-
-	_, ok1 := table.indices[col.name]
-	_, ok2 := table.uniqIndices[col.name]
-	if !ok1 && !ok2 {
-		newCols := make([]*column, 0, len(table.columns)-1)
-		newCols = append(newCols, table.columns[:index]...)
-		newCols = append(newCols, table.columns[index+1:]...)
-		table.columns = newCols
-		sql := fmt.Sprintf("alter table %s.%s drop column %s", table.schema, table.name, col.name)
-		execSqls(db, table.schema, []string{sql}, [][]interface{}{{}})
-	}
-
-	// do add  column ddl
-	index = randInt(2, len(table.columns)-1)
-	colName := randString(5)
-
-	col = &column{
-		name: colName,
-		tp: &types.FieldType{
-			Tp:   mysql.TypeVarchar,
-			Flen: 45,
-		},
-	}
-
-	newCols := make([]*column, 0, len(table.columns)+1)
-	newCols = append(newCols, table.columns[:index]...)
-	newCols = append(newCols, col)
-	newCols = append(newCols, table.columns[index:]...)
-
-	table.columns = newCols
-	sql := fmt.Sprintf("alter table %s.%s add column `%s` varchar(45) after %s", table.schema, table.name, col.name, table.columns[index-1].name)
-	execSqls(db, table.schema, []string{sql}, [][]interface{}{{}})
-}
-
 func doProcess(table *table, db *sql.DB, jobCount int, workerCount int, batch int) {
 	if len(table.columns) <= 2 {
 		log.S().Fatal("column count must > 2, and the first and second column are for primary key")
 	}
 
-	doDMLProcess(table, db, jobCount/2, workerCount, batch)
-	doDDLProcess(table, db)
-	doDMLProcess(table, db, jobCount/2, workerCount, batch)
+	doDMLProcess(table, db, jobCount, workerCount, batch)
 }
