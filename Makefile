@@ -1,4 +1,4 @@
-.PHONY: build importer dump_region sync_diff_inspector ddl_checker test check deps version
+.PHONY: build importer dump_region sync_diff_inspector ddl_checker data-importer test check deps version
 
 # Ensure GOPATH is set before running build process.
 ifeq "$(GOPATH)" ""
@@ -45,6 +45,9 @@ sync_diff_inspector:
 
 ddl_checker:
 	$(GO) build -ldflags '$(LDFLAGS)' -o bin/ddl_checker ./ddl_checker
+
+data-importer:
+	$(GO) build -ldflags '$(LDFLAGS)' -o bin/data-importer ./data-importer
 
 test: version
 	@export log_level=error; \
