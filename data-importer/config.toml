@@ -6,6 +6,8 @@ worker-count = 10
 job-count = 1000
 batch = 10
 
+table-sql-dir = "/Users/xiang/newWorld/gopath/src/github.com/pingcap/tidb-tools/sqls"
+
 [source-db]
 host = "127.0.0.1"
 user = "root"

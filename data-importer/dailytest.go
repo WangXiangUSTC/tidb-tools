@@ -20,53 +20,41 @@ import (
 )
 
 // Run runs the daily test
-func Run(sourceDB *sql.DB, schema string, workerCount int, jobCount int, batch int) {
-
-	TableSQLs := []string{`
-create table test.ptest(
-	a int primary key,
-	b double NOT NULL DEFAULT 2.0,
-	c varchar(10) NOT NULL,
-	d time unique
-);
-`,
-		`
-create table test.itest(
-	a int,
-	b double NOT NULL DEFAULT 2.0,
-	c varchar(10) NOT NULL,
-	d time unique,
-	PRIMARY KEY(a, b)
-);
-`,
-		`
-create table test.ntest(
-	a int,
-	b double NOT NULL DEFAULT 2.0,
-	c varchar(10) NOT NULL,
-	d time unique
-);
-`}
-
-	// run the simple test case
-	//RunCase(sourceDB, targetDB, schema)
-
-	RunTest(sourceDB, schema, func(src *sql.DB) {
-		// generate insert/update/delete sqls and execute
-		RunDailyTest(sourceDB, schema, TableSQLs, workerCount, jobCount, batch)
-	})
+func Run(sourceDB *sql.DB, tableSQLs []string, workerCount int, jobCount int, batch int) {
 
 	/*
-	RunTest(sourceDB, schema, func(src *sql.DB) {
-		// truncate test data
-		TruncateTestTable(sourceDB, schema, TableSQLs)
-	})
-
-	RunTest(sourceDB, schema, func(src *sql.DB) {
-		// drop test table
-		DropTestTable(sourceDB, schema, TableSQLs)
-	})
+		TableSQLs := []string{`
+	create table test.ptest(
+		a int primary key,
+		b double NOT NULL DEFAULT 2.0,
+		c varchar(10) NOT NULL,
+		d time unique
+	);
+	`,
+			`
+	create table test.itest(
+		a int,
+		b double NOT NULL DEFAULT 2.0,
+		c varchar(10) NOT NULL,
+		d time unique,
+		PRIMARY KEY(a, b)
+	);
+	`,
+			`
+	create table test.ntest(
+		a int,
+		b double NOT NULL DEFAULT 2.0,
+		c varchar(10) NOT NULL,
+		d time unique
+	);
+	`,
+	}
 	*/
+
+	RunTest(sourceDB, func(src *sql.DB) {
+		// generate insert/update/delete sqls and execute
+		RunDailyTest(sourceDB, tableSQLs, workerCount, jobCount, batch)
+	})
 
 	log.S().Info("test pass!!!")
 

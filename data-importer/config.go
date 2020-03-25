@@ -54,6 +54,8 @@ type Config struct {
 
 	//TargetDBCfg DBConfig `toml:"target-db" json:"target-db"`
 
+	TableSQLDir string `toml:"table-sql-dir" json:"table-sql-dir"`
+
 	configFile string
 }
 
@@ -98,4 +100,3 @@ func (c *Config) configFromFile(path string) error {
 	_, err := toml.DecodeFile(path, c)
 	return errors.Trace(err)
 }
-

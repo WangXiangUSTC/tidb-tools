@@ -210,7 +210,7 @@ func getFunctionName(i interface{}) string {
 }
 
 // for every DDL, run the DDL continuously, and one goroutine for one TiDB instance to do some DML op
-func runDDLTest(srcs []*sql.DB, targetDB *sql.DB, schema string) {
+func runDDLTest(srcs []*sql.DB, targetDB *sql.DB) {
 	runTime := time.Second * 3
 	start := time.Now()
 	defer func() {
@@ -218,7 +218,7 @@ func runDDLTest(srcs []*sql.DB, targetDB *sql.DB, schema string) {
 	}()
 
 	for _, ddlFunc := range []func(context.Context, *sql.DB){createDropSchemaDDL, truncateDDL, addDropColumnDDL, modifyColumnDDL} {
-		RunTest(srcs[0], schema, func(_ *sql.DB) {
+		RunTest(srcs[0], func(_ *sql.DB) {
 			log.S().Info("running ddl test: ", getFunctionName(ddlFunc))
 
 			var wg sync.WaitGroup
@@ -243,15 +243,5 @@ func runDDLTest(srcs []*sql.DB, targetDB *sql.DB, schema string) {
 
 			wg.Wait()
 		})
-
-		/*
-		// just cleanup
-		RunTest(srcs[0], schema, func(db *sql.DB) {
-			_, err := db.Exec("drop table if exists test1")
-			if err != nil {
-				log.S().Fatal(err)
-			}
-		})
-		*/
 	}
 }

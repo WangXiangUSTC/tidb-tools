@@ -15,6 +15,7 @@ package main
 
 import (
 	"fmt"
+	"math"
 	"math/rand"
 	"time"
 )
@@ -32,10 +33,19 @@ func init() {
 }
 
 func randInt(min int, max int) int {
+	if max < min {
+		max = min
+	}
 	return min + rand.Intn(max-min+1)
 }
 
 func randInt64(min int64, max int64) int64 {
+	if max >= math.MaxInt64 {
+		max = max - 1
+	}
+	if max < min {
+		max = min
+	}
 	return min + rand.Int63n(max-min+1)
 }
 

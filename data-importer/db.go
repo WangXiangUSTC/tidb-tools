@@ -279,7 +279,7 @@ func genColumnData(table *table, column *column) (string, error) {
 
 		data = append(data, '\'')
 		return string(data), nil
-	case mysql.TypeFloat, mysql.TypeDouble, mysql.TypeDecimal:
+	case mysql.TypeFloat, mysql.TypeDouble, mysql.TypeDecimal, mysql.TypeNewDecimal:
 		var data float64
 		if isUnique {
 			data = float64(uniqInt64Value(column, 0, math.MaxInt64))
@@ -332,7 +332,7 @@ func genColumnData(table *table, column *column) (string, error) {
 		data = append(data, '\'')
 		return string(data), nil
 	default:
-		return "", errors.Errorf("unsupported column type - %v", column)
+		return "", errors.Errorf("unsupported column type %v, column %v", column.tp.Tp, column)
 	}
 }
 
@@ -351,7 +351,9 @@ func execSQL(db *sql.DB, schema string, sql string) error {
 		return nil
 	}
 
-	sql = fmt.Sprintf("use %s; %s", schema, sql)
+	if len(schema) != 0 {
+		sql = fmt.Sprintf("use %s; %s", schema, sql)
+	}
 	_, err := db.Exec(sql)
 	if err != nil {
 		return errors.Trace(err)
@@ -361,28 +363,28 @@ func execSQL(db *sql.DB, schema string, sql string) error {
 }
 
 // RunTest will call writeSrc and check if src is contisitent with dst
-func RunTest(src *sql.DB, schema string, writeSrc func(src *sql.DB)) {
+func RunTest(src *sql.DB, writeSrc func(src *sql.DB)) {
 	writeSrc(src)
 
 	/*
-	tick := time.NewTicker(time.Second * 5)
-	defer tick.Stop()
-	timeout := time.After(time.Second * 240)
+		tick := time.NewTicker(time.Second * 5)
+		defer tick.Stop()
+		timeout := time.After(time.Second * 240)
 
-	for {
-		select {
-		case <-tick.C:
-			if util.CheckSyncState(src, dst, schema) {
+		for {
+			select {
+			case <-tick.C:
+				if util.CheckSyncState(src, dst, schema) {
+					return
+				}
+			case <-timeout:
+				// check last time
+				if !util.CheckSyncState(src, dst, schema) {
+					log.S().Fatal("sourceDB don't equal targetDB")
+				}
+
 				return
 			}
-		case <-timeout:
-			// check last time
-			if !util.CheckSyncState(src, dst, schema) {
-				log.S().Fatal("sourceDB don't equal targetDB")
-			}
-
-			return
 		}
-	}
 	*/
 }

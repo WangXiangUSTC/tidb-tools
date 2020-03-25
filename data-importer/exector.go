@@ -18,11 +18,12 @@ import (
 	"fmt"
 	"sync"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 )
 
 // RunDailyTest generates insert/update/delete sqls and execute
-func RunDailyTest(db *sql.DB, schema string, tableSQLs []string, workerCount int, jobCount int, batch int) {
+func RunDailyTest(db *sql.DB, tableSQLs []string, workerCount int, jobCount int, batch int) {
 	var wg sync.WaitGroup
 	wg.Add(len(tableSQLs))
 
@@ -33,12 +34,13 @@ func RunDailyTest(db *sql.DB, schema string, tableSQLs []string, workerCount int
 			table := newTable()
 			err := parseTableSQL(table, tableSQLs[i])
 			if err != nil {
-				log.S().Fatal(err)
+				log.S().Errorf("parse sql %s failed, error %v", tableSQLs[i], errors.Trace(err))
+				return
 			}
 
-			err = execSQL(db, schema, tableSQLs[i])
+			err = execSQL(db, "", tableSQLs[i])
 			if err != nil {
-				log.S().Fatal(err)
+				log.S().Fatal(tableSQLs[i], err)
 			}
 
 			doProcess(table, db, jobCount, workerCount, batch)

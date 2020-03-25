@@ -14,8 +14,13 @@
 package main
 
 import (
+	"bufio"
 	"flag"
+	"io"
+	"io/ioutil"
 	"os"
+	"path/filepath"
+	"strings"
 
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
@@ -47,31 +52,82 @@ func main() {
 		}
 	}()
 
-	/*
-	targetDB, err := util.CreateDB(cfg.TargetDBCfg)
+	files, err := ioutil.ReadDir(cfg.TableSQLDir)
 	if err != nil {
 		log.S().Fatal(err)
 	}
-	defer func() {
-		if err := util.CloseDB(targetDB); err != nil {
-			log.S().Errorf("Failed to close target database: %s\n", err)
-		}
-	}()
-	*/
 
-	/*
-	sourceDBs, err := util.CreateSourceDBs()
-	if err != nil {
-		log.S().Fatal(err)
-	}
-	defer func() {
-		if err := util.CloseDBs(sourceDBs); err != nil {
-			log.S().Errorf("Failed to close source databases: %s\n", err)
+	tableSQLs := make([]string, 0, len(files))
+	for _, f := range files {
+		sql, err := analyzeSQLFile(filepath.Join(cfg.TableSQLDir, f.Name()))
+		if err != nil {
+			log.S().Fatal(err)
 		}
-	}()
-	*/
+		if len(sql) == 0 {
+			log.S().Errorf("parse file %s get empty sql", f.Name())
+			os.Exit(1)
+		}
+		tableSQLs = append(tableSQLs, sql)
+	}
 
 	//dailytest.RunMultiSource(sourceDBs, targetDB, cfg.SourceDBCfg.Name)
-	Run(sourceDB, "test", cfg.WorkerCount, cfg.JobCount, cfg.Batch)
+	Run(sourceDB, tableSQLs, cfg.WorkerCount, cfg.JobCount, cfg.Batch)
 }
 
+func analyzeSQLFile(file string) (string, error) {
+	f, err := os.Open(file)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+
+	//tctx := l.logCtx.WithContext(ctx)
+
+	data := make([]byte, 0, 1024*1024)
+	br := bufio.NewReader(f)
+	for {
+		line, err := br.ReadString('\n')
+		if err == io.EOF {
+			break
+		}
+
+		realLine := strings.TrimSpace(line[:len(line)-1])
+		if len(realLine) == 0 {
+			continue
+		}
+
+		data = append(data, []byte(realLine)...)
+		if data[len(data)-1] == ';' {
+			query := string(data)
+			//data = data[0:0]
+			if strings.HasPrefix(query, "/*") && strings.HasSuffix(query, "*/;") {
+				continue
+			}
+
+			/*
+				var sqls []string
+				dstSchema, dstTable := fetchMatchedLiteral(tctx, l.tableRouter, schema, table)
+				// for table
+				if table != "" {
+					sqls = append(sqls, fmt.Sprintf("USE `%s`;", dstSchema))
+					query = renameShardingTable(query, table, dstTable)
+				} else {
+					query = renameShardingSchema(query, schema, dstSchema)
+				}
+			*/
+
+			//l.logCtx.L().Debug("schema create statement", zap.String("sql", query))
+
+			/*
+				sqls = append(sqls, query)
+				err = conn.executeSQL(tctx, sqls)
+				if err != nil {
+					return terror.WithScope(err, terror.ScopeDownstream)
+				}
+			*/
+		}
+
+	}
+
+	return string(data), nil
+}
