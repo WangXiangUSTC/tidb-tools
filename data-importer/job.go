@@ -17,6 +17,7 @@ import (
 	"database/sql"
 	"fmt"
 	"strings"
+	"context"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -45,13 +46,14 @@ func doSqls(table *table, db *sql.DB, count int) {
 		log.S().Infof("insert %d datas, cost %v", len(datas), time.Since(t))
 	}()
 
-	values := strings.Join(datas, ",")
-	_, err = db.Exec(fmt.Sprintf("%s %s;", sqlPrefix, values))
+	//values := strings.Join(datas, ",")
+	sql := fmt.Sprintf("%s %s;", sqlPrefix, strings.Join(datas, ","))
+	_, err = db.Exec(sql)
 	if err == nil {
 		return
 	}
 
-	log.S().Error(errors.ErrorStack(err))
+	log.S().Errorf("execute sql %s failed, error %v", sql, errors.ErrorStack(err))
 	if !strings.Contains(err.Error(), "Duplicate entry") {
 		return
 	}
@@ -95,21 +97,32 @@ func execSqls(db *sql.DB, schema string, sqls []string, args [][]interface{}) {
 	}
 }
 
-func doJob(table *table, db *sql.DB, batch int, jobChan chan struct{}, doneChan chan struct{}) {
+func doJob(ctx context.Context, table *table, db *sql.DB, batch int, jobCount int) {
+	sc := NewSpeedControl(500, 1)
 	count := 0
-	for range jobChan {
-		count++
-		if count == batch {
-			doSqls(table, db, count)
-			count = 0
+
+	t := time.Now()
+	defer func() {
+		log.S().Infof("table %s.%s total insert %d rows, cost %v", table.schema, table.name, count, time.Since(t))
+	}()
+	
+	for {
+		num := sc.ApplyTokenSync()
+		doSqls(table, db, int(num))
+		
+		count += int(num)
+		if count > jobCount {
+			break
+		}
+
+		select {
+		case <- ctx.Done():
+			break
+		default:
 		}
 	}
 
-	if count > 0 {
-		doSqls(table, db, count)
-	}
-
-	doneChan <- struct{}{}
+	//doneChan <- struct{}{}
 }
 
 func doWait(doneChan chan struct{}, start time.Time, jobCount int, workerCount int) {
@@ -121,17 +134,17 @@ func doWait(doneChan chan struct{}, start time.Time, jobCount int, workerCount i
 }
 
 func doDMLProcess(table *table, db *sql.DB, jobCount int, workerCount int, batch int) {
-	jobChan := make(chan struct{}, 16*workerCount)
-	doneChan := make(chan struct{}, workerCount)
+	//jobChan := make(chan struct{}, 16*workerCount)
+	//doneChan := make(chan struct{}, workerCount)
 
-	start := time.Now()
-	go addJobs(jobCount, jobChan)
+	//start := time.Now()
+	//go addJobs(jobCount, jobChan)
 
-	for i := 0; i < workerCount; i++ {
-		go doJob(table, db, batch, jobChan, doneChan)
-	}
+	//for i := 0; i < workerCount; i++ {
+	doJob(context.Background(), table, db, batch, jobCount)
+	//}
 
-	doWait(doneChan, start, jobCount, workerCount)
+	//doWait(doneChan, start, jobCount, workerCount)
 
 }
 

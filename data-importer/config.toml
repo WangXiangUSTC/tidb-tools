@@ -3,7 +3,7 @@
 log-level = "info"
 
 worker-count = 10
-job-count = 100000
+job-count = 10000
 batch = 100
 
 table-sql-dir = "/Users/xiang/newWorld/gopath/src/github.com/pingcap/tidb-tools/sqls_bak"
