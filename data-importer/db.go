@@ -171,12 +171,12 @@ func genUpdateSqls(table *table, db *sql.DB, count int) ([]string, [][]interface
 	return sqls, args, nil
 }
 
-func genInsertSqls(table *table, count int) (string, []string, error) {
+func genInsertSqls(table *table, count int64) (string, []string, error) {
 	sqlPrefix := fmt.Sprintf("insert into %s.%s values", table.schema, table.name)
 
 	datas := make([]string, 0, count)
 
-	for i := 0; i < count; i++ {
+	for i := int64(0); i < count; i++ {
 		data, err := genRowData(table)
 		if err != nil {
 			return "", nil, errors.Trace(err)

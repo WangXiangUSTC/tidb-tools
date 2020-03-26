@@ -24,7 +24,7 @@ import (
 )
 
 // Import generates insert sqls and execute
-func Import(db *sql.DB, tableSQLs []string, workerCount int, jobCount int, batch int, ratios map[string]float64, qps int64) {
+func Import(db *sql.DB, tableSQLs []string, workerCount int, jobCount int64, batch int64, ratios map[string]float64, qps int64) {
 	var wg sync.WaitGroup
 	wg.Add(len(tableSQLs))
 
@@ -49,7 +49,7 @@ func Import(db *sql.DB, tableSQLs []string, workerCount int, jobCount int, batch
 			}
 
 			if ratio, ok := ratios[quoteSchemaTable(table.schema, table.name)]; ok {
-				tableJobCount := int(float64(jobCount) * ratio)
+				tableJobCount := int64(float64(jobCount) * ratio)
 				if tableJobCount > 1 {
 					doProcess(table, db, tableJobCount, workerCount, batch, ratio, qps)
 				} else {

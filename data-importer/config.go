@@ -31,8 +31,8 @@ func NewConfig() *Config {
 
 	fs.StringVar(&cfg.configFile, "config", "", "Config file")
 	fs.IntVar(&cfg.WorkerCount, "c", 1, "parallel worker count")
-	fs.IntVar(&cfg.JobCount, "n", 1, "total job count")
-	fs.IntVar(&cfg.Batch, "b", 1, "insert batch commit count")
+	fs.Int64Var(&cfg.JobCount, "n", 1, "total job count")
+	fs.Int64Var(&cfg.Batch, "b", 1, "insert batch commit count")
 	fs.StringVar(&cfg.LogLevel, "L", "info", "log level: debug, info, warn, error, fatal")
 
 	return cfg
@@ -46,9 +46,9 @@ type Config struct {
 
 	WorkerCount int `toml:"worker-count" json:"worker-count"`
 
-	JobCount int `toml:"job-count" json:"job-count"`
+	JobCount int64 `toml:"job-count" json:"job-count"`
 
-	Batch int `toml:"batch" json:"batch"`
+	Batch int64 `toml:"batch" json:"batch"`
 
 	SourceDBCfg dbutil.DBConfig `toml:"source-db" json:"source-db"`
 

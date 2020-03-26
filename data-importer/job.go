@@ -35,7 +35,7 @@ func addJobs(jobCount int, jobChan chan struct{}) {
 	close(jobChan)
 }
 
-func doSqls(table *table, db *sql.DB, batch, count int) {
+func doSqls(table *table, db *sql.DB, batch, count int64) {
 	sqlPrefix, datas, err := genInsertSqls(table, count)
 	if err != nil {
 		log.S().Error(errors.ErrorStack(err))
@@ -47,8 +47,8 @@ func doSqls(table *table, db *sql.DB, batch, count int) {
 		log.S().Infof("%s.%s insert %d datas, cost %v", table.schema, table.name, len(datas), time.Since(t))
 	}()
 
-	for begin := 0; begin < len(datas); begin += batch {
-		end := begin + batch
+	for begin := 0; begin < len(datas); begin += int(batch) {
+		end := begin + int(batch)
 		if end > len(datas) {
 			end = len(datas)
 		}
@@ -104,17 +104,21 @@ func execSqls(db *sql.DB, schema string, sqls []string, args [][]interface{}) {
 	}
 }
 
-func doJob(ctx context.Context, table *table, db *sql.DB, batch int, jobCount int, ratio float64, qps int64) {
+func doJob(ctx context.Context, table *table, db *sql.DB, batch int64, jobCount int64, ratio float64, qps int64) {
 	interval := int64(1)
 	speed := int64(float64(qps)*ratio)
-	if speed < 1 {
-		interval = int64(1/ratio)
-		speed = 1
+	if speed == 0 {
+		log.S().Infof("table %s.%s 's qps is too low, will ignore it", table.schema, table.name)
+		return
+	}
+	if speed < batch {
+		interval = int64(1/ratio)*(batch/speed)
+		speed = speed * batch/speed
 	}
 
 	log.S().Infof("table %s.%s will insert %d rows every %d seconds", table.schema, table.name, speed, interval)
 	sc := NewSpeedControl(speed, interval)
-	count := 0
+	count := int64(0)
 
 	t := time.Now()
 	defer func() {
@@ -122,17 +126,22 @@ func doJob(ctx context.Context, table *table, db *sql.DB, batch int, jobCount in
 	}()
 	
 	for count < jobCount {
-		num := int(sc.ApplyTokenSync())
+		num := sc.ApplyTokenSync()
 
 		if count + num > jobCount {
 			num = jobCount - count
 		}
-		count += int(num)
+		count += num
 
 		var wg sync.WaitGroup
 
-		threadBatch := 1*batch
-		for i := 0; i < num; i += threadBatch {
+		// one table's max thread is 5
+		threadBatch := 5*batch
+		threadNum := num / threadBatch
+		if threadNum > 5 {
+			threadBatch = num/5
+		}
+		for i := int64(0); i < num; i += threadBatch {
 			end := i + threadBatch
 			if end > num {
 				end = num
@@ -143,7 +152,7 @@ func doJob(ctx context.Context, table *table, db *sql.DB, batch int, jobCount in
 			}
 
 			wg.Add(1)
-			go func(doNum int) {
+			go func(doNum int64) {
 				doSqls(table, db, batch, doNum)
 				wg.Done()
 			}(end-i)
@@ -169,7 +178,7 @@ func doWait(doneChan chan struct{}, start time.Time, jobCount int, workerCount i
 	close(doneChan)
 }
 
-func doDMLProcess(table *table, db *sql.DB, jobCount int, workerCount int, batch int, ratio float64, qps int64) {
+func doDMLProcess(table *table, db *sql.DB, jobCount int64, workerCount int, batch int64, ratio float64, qps int64) {
 	//jobChan := make(chan struct{}, 16*workerCount)
 	//doneChan := make(chan struct{}, workerCount)
 
@@ -184,7 +193,7 @@ func doDMLProcess(table *table, db *sql.DB, jobCount int, workerCount int, batch
 
 }
 
-func doProcess(table *table, db *sql.DB, jobCount int, workerCount int, batch int, ratio float64, qps int64) {
+func doProcess(table *table, db *sql.DB, jobCount int64, workerCount int, batch int64, ratio float64, qps int64) {
 	if len(table.columns) <= 2 {
 		log.S().Fatal("column count must > 2, and the first and second column are for primary key")
 	}
