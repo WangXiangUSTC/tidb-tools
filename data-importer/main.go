@@ -16,16 +16,16 @@ package main
 import (
 	"bufio"
 	"flag"
-	"io"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"os"
 	"path/filepath"
 	"strings"
 
 	_ "github.com/go-sql-driver/mysql"
-	"github.com/pingcap/errors"
 	"github.com/jszwec/csvutil"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb-tools/pkg/dbutil"
 	//"github.com/pingcap/tidb-binlog/tests/dailytest"
@@ -144,9 +144,9 @@ func analyzeSQLFile(file string) (string, error) {
 
 func analyzeRatioFile(file string) (map[string]float64, error) {
 	type tableRatio struct {
-		Schema      string  `csv:"Db_name"`
-		Table       string  `csv:"Table_name"`
-		Ratio       float64 `csv:"Ratio"`
+		Schema string  `csv:"Db_name"`
+		Table  string  `csv:"Table_name"`
+		Ratio  float64 `csv:"Ratio"`
 	}
 
 	content, err := ioutil.ReadFile(file)
