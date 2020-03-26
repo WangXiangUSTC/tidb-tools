@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"strings"
 	"context"
+	"sync"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -34,7 +35,7 @@ func addJobs(jobCount int, jobChan chan struct{}) {
 	close(jobChan)
 }
 
-func doSqls(table *table, db *sql.DB, count int) {
+func doSqls(table *table, db *sql.DB, batch, count int) {
 	sqlPrefix, datas, err := genInsertSqls(table, count)
 	if err != nil {
 		log.S().Error(errors.ErrorStack(err))
@@ -43,26 +44,32 @@ func doSqls(table *table, db *sql.DB, count int) {
 
 	t := time.Now()
 	defer func() {
-		log.S().Infof("insert %d datas, cost %v", len(datas), time.Since(t))
+		log.S().Infof("%s.%s insert %d datas, cost %v", table.schema, table.name, len(datas), time.Since(t))
 	}()
 
-	//values := strings.Join(datas, ",")
-	sql := fmt.Sprintf("%s %s;", sqlPrefix, strings.Join(datas, ","))
-	_, err = db.Exec(sql)
-	if err == nil {
-		return
-	}
+	for begin := 0; begin < len(datas); begin += batch {
+		end := begin + batch
+		if end > len(datas) {
+			end = len(datas)
+		}
 
-	log.S().Errorf("execute sql %s failed, error %v", sql, errors.ErrorStack(err))
-	if !strings.Contains(err.Error(), "Duplicate entry") {
-		return
-	}
+		sql := fmt.Sprintf("%s %s;", sqlPrefix, strings.Join(datas[begin:end], ","))
+		_, err = db.Exec(sql)
+		if err == nil {
+			continue
+		}
 
-	log.S().Error("have duplicate key, insert for every row")
-	for _, data := range datas {
-		_, err = db.Exec(fmt.Sprintf("%s %s;", sqlPrefix, data))
-		if err != nil {
-			log.S().Error(errors.ErrorStack(err))
+		log.S().Errorf("%s.%s execute sql %s failed, %d rows is not inserted, error %v", table.schema, table.name, sqlPrefix, errors.ErrorStack(err))
+		if !strings.Contains(err.Error(), "Duplicate entry") {
+			continue
+		}
+
+		log.S().Warnf("%s.%s insert data have duplicate key, insert for every row", table.schema, table.name)
+		for _, data := range datas[begin:end] {
+			_, err = db.Exec(fmt.Sprintf("%s %s;", sqlPrefix, data))
+			if err != nil {
+				log.S().Error(errors.ErrorStack(err))
+			}
 		}
 	}
 }
@@ -97,23 +104,52 @@ func execSqls(db *sql.DB, schema string, sqls []string, args [][]interface{}) {
 	}
 }
 
-func doJob(ctx context.Context, table *table, db *sql.DB, batch int, jobCount int) {
-	sc := NewSpeedControl(500, 1)
+func doJob(ctx context.Context, table *table, db *sql.DB, batch int, jobCount int, ratio float64, qps int64) {
+	interval := int64(1)
+	speed := int64(float64(qps)*ratio)
+	if speed < 1 {
+		interval = int64(1/ratio)
+		speed = 1
+	}
+
+	log.S().Infof("table %s.%s will insert %d rows every %d seconds", table.schema, table.name, speed, interval)
+	sc := NewSpeedControl(speed, interval)
 	count := 0
 
 	t := time.Now()
 	defer func() {
-		log.S().Infof("table %s.%s total insert %d rows, cost %v", table.schema, table.name, count, time.Since(t))
+		log.S().Infof("table %s.%s should insert %d rows, total insert %d rows, cost %v", table.schema, table.name, jobCount, count, time.Since(t))
 	}()
 	
-	for {
-		num := sc.ApplyTokenSync()
-		doSqls(table, db, int(num))
-		
-		count += int(num)
-		if count > jobCount {
-			break
+	for count < jobCount {
+		num := int(sc.ApplyTokenSync())
+
+		if count + num > jobCount {
+			num = jobCount - count
 		}
+		count += int(num)
+
+		var wg sync.WaitGroup
+
+		threadBatch := 1*batch
+		for i := 0; i < num; i += threadBatch {
+			end := i + threadBatch
+			if end > num {
+				end = num
+			}
+
+			if end-i <= 0 {
+				continue
+			}
+
+			wg.Add(1)
+			go func(doNum int) {
+				doSqls(table, db, batch, doNum)
+				wg.Done()
+			}(end-i)
+		}
+
+		wg.Wait()
 
 		select {
 		case <- ctx.Done():
@@ -133,7 +169,7 @@ func doWait(doneChan chan struct{}, start time.Time, jobCount int, workerCount i
 	close(doneChan)
 }
 
-func doDMLProcess(table *table, db *sql.DB, jobCount int, workerCount int, batch int) {
+func doDMLProcess(table *table, db *sql.DB, jobCount int, workerCount int, batch int, ratio float64, qps int64) {
 	//jobChan := make(chan struct{}, 16*workerCount)
 	//doneChan := make(chan struct{}, workerCount)
 
@@ -141,17 +177,17 @@ func doDMLProcess(table *table, db *sql.DB, jobCount int, workerCount int, batch
 	//go addJobs(jobCount, jobChan)
 
 	//for i := 0; i < workerCount; i++ {
-	doJob(context.Background(), table, db, batch, jobCount)
+	doJob(context.Background(), table, db, batch, jobCount, ratio, qps)
 	//}
 
 	//doWait(doneChan, start, jobCount, workerCount)
 
 }
 
-func doProcess(table *table, db *sql.DB, jobCount int, workerCount int, batch int) {
+func doProcess(table *table, db *sql.DB, jobCount int, workerCount int, batch int, ratio float64, qps int64) {
 	if len(table.columns) <= 2 {
 		log.S().Fatal("column count must > 2, and the first and second column are for primary key")
 	}
 
-	doDMLProcess(table, db, jobCount, workerCount, batch)
+	doDMLProcess(table, db, jobCount, workerCount, batch, ratio, qps)
 }

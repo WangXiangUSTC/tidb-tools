@@ -16,14 +16,15 @@ package main
 import (
 	"database/sql"
 	"fmt"
+	"strings"
 	"sync"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 )
 
-// RunDailyTest generates insert/update/delete sqls and execute
-func RunDailyTest(db *sql.DB, tableSQLs []string, workerCount int, jobCount int, batch int) {
+// Import generates insert sqls and execute
+func Import(db *sql.DB, tableSQLs []string, workerCount int, jobCount int, batch int, ratios map[string]float64, qps int64) {
 	var wg sync.WaitGroup
 	wg.Add(len(tableSQLs))
 
@@ -40,10 +41,21 @@ func RunDailyTest(db *sql.DB, tableSQLs []string, workerCount int, jobCount int,
 
 			err = execSQL(db, "", tableSQLs[i])
 			if err != nil {
-				log.S().Fatal(tableSQLs[i], err)
+				if strings.Contains(err.Error(), "already exists") {
+					log.S().Warnf("table %s.%s already exists", table.schema, table.name)
+				} else {
+					log.S().Fatal(tableSQLs[i], err)
+				}
 			}
 
-			doProcess(table, db, jobCount, workerCount, batch)
+			if ratio, ok := ratios[quoteSchemaTable(table.schema, table.name)]; ok {
+				tableJobCount := int(float64(jobCount) * ratio)
+				if tableJobCount > 1 {
+					doProcess(table, db, tableJobCount, workerCount, batch, ratio, qps)
+				} else {
+					log.S().Warnf("table %s.%s's row count is less than 1, will ignore it", table.schema, table.name)
+				}
+			}
 		}(i)
 	}
 

@@ -17,6 +17,7 @@ import (
 	"bufio"
 	"flag"
 	"io"
+	"fmt"
 	"io/ioutil"
 	"os"
 	"path/filepath"
@@ -24,6 +25,7 @@ import (
 
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
+	"github.com/jszwec/csvutil"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb-tools/pkg/dbutil"
 	//"github.com/pingcap/tidb-binlog/tests/dailytest"
@@ -51,6 +53,8 @@ func main() {
 			log.S().Errorf("Failed to close source database: %s\n", err)
 		}
 	}()
+	sourceDB.SetMaxOpenConns(100)
+	sourceDB.SetMaxIdleConns(100)
 
 	files, err := ioutil.ReadDir(cfg.TableSQLDir)
 	if err != nil {
@@ -70,8 +74,14 @@ func main() {
 		tableSQLs = append(tableSQLs, sql)
 	}
 
-	//dailytest.RunMultiSource(sourceDBs, targetDB, cfg.SourceDBCfg.Name)
-	Run(sourceDB, tableSQLs, cfg.WorkerCount, cfg.JobCount, cfg.Batch)
+	tableRatio, err := analyzeRatioFile(cfg.RatioFile)
+	if err != nil {
+		log.S().Fatal(err)
+	}
+
+	Import(sourceDB, tableSQLs, cfg.WorkerCount, cfg.JobCount, cfg.Batch, tableRatio, cfg.QPS)
+
+	log.S().Info("import finished!!!")
 }
 
 func analyzeSQLFile(file string) (string, error) {
@@ -130,4 +140,41 @@ func analyzeSQLFile(file string) (string, error) {
 	}
 
 	return string(data), nil
+}
+
+func analyzeRatioFile(file string) (map[string]float64, error) {
+	type tableRatio struct {
+		Schema      string  `csv:"Db_name"`
+		Table       string  `csv:"Table_name"`
+		Ratio       float64 `csv:"Ratio"`
+	}
+
+	content, err := ioutil.ReadFile(file)
+	if err != nil {
+		return nil, err
+	}
+
+	var tables []tableRatio
+	if err := csvutil.Unmarshal(content, &tables); err != nil {
+		return nil, err
+	}
+
+	tablesMap := make(map[string]float64)
+	for _, table := range tables {
+		tablesMap[quoteSchemaTable(table.Schema, table.Table)] = table.Ratio
+	}
+
+	return tablesMap, nil
+}
+
+func quoteSchemaTable(schema, table string) string {
+	if len(schema) == 0 {
+		return ""
+	}
+
+	if len(table) > 0 {
+		return fmt.Sprintf("`%s`.`%s`", schema, table)
+	}
+
+	return fmt.Sprintf("`%s`", schema)
 }

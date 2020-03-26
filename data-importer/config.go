@@ -56,6 +56,10 @@ type Config struct {
 
 	TableSQLDir string `toml:"table-sql-dir" json:"table-sql-dir"`
 
+	RatioFile string `toml:"ratio-file" json:"ratio-file"`
+
+	QPS int64 `toml:"qps" json:"qps"`
+
 	configFile string
 }
 

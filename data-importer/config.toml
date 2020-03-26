@@ -3,10 +3,12 @@
 log-level = "info"
 
 worker-count = 10
-job-count = 10000
+job-count = 1000000
 batch = 100
 
-table-sql-dir = "/Users/xiang/newWorld/gopath/src/github.com/pingcap/tidb-tools/sqls_bak"
+table-sql-dir = "/Users/xiang/newWorld/gopath/src/github.com/pingcap/tidb-tools/sqls"
+ratio-file = "/Users/xiang/newWorld/gopath/src/github.com/pingcap/tidb-tools/atlas_wms.csv"
+qps = 5000
 
 [source-db]
 host = "127.0.0.1"

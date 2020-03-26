@@ -364,30 +364,3 @@ func execSQL(db *sql.DB, schema string, sql string) error {
 
 	return nil
 }
-
-// RunTest will call writeSrc and check if src is contisitent with dst
-func RunTest(src *sql.DB, writeSrc func(src *sql.DB)) {
-	writeSrc(src)
-
-	/*
-		tick := time.NewTicker(time.Second * 5)
-		defer tick.Stop()
-		timeout := time.After(time.Second * 240)
-
-		for {
-			select {
-			case <-tick.C:
-				if util.CheckSyncState(src, dst, schema) {
-					return
-				}
-			case <-timeout:
-				// check last time
-				if !util.CheckSyncState(src, dst, schema) {
-					log.S().Fatal("sourceDB don't equal targetDB")
-				}
-
-				return
-			}
-		}
-	*/
-}
