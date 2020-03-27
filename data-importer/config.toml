@@ -2,7 +2,7 @@
 
 log-level = "info"
 
-worker-count = 32
+worker-count = 64
 job-count = 100000
 batch = 100
 

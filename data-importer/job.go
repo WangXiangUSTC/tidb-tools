@@ -171,7 +171,7 @@ func doJobs(ctx context.Context, db *sql.DB, batch int64, workerCount int, allJo
 	var wg sync.WaitGroup
 	jobChans := make([]chan job, 0, workerCount)
 	for i := 0; i < workerCount; i++ {
-		jobChan := make(chan job, 10)
+		jobChan := make(chan job, 20)
 		jobChans = append(jobChans, jobChan)
 		wg.Add(1)
 		go func(threadNum int) {
@@ -221,48 +221,51 @@ func splitJob(j job, batch int64) []job {
 }
 
 func doJob(ctx context.Context, db *sql.DB, id int, batch int64, jobChan chan job) {
-	log.S().Infof("thread %d is work", id)
-	count := 0
+	log.S().Infof("[start] thread %d is work", id)
+	rowCount := 0
+	txnCount := 0
 	t := time.Now()
 	defer func() {
-		log.S().Infof("thread %d insert %d rows, total cost time %v", id, count, time.Since(t))
+		log.S().Infof("[Done] thread %d insert %d rows, %d transcations, total cost time %v", id, rowCount, txnCount, time.Since(t))
 	}()
 
+	ticker := time.NewTicker(time.Duration(10) * time.Second)
+	defer ticker.Stop()
+
 	for {
-		job, ok := <-jobChan
-		if !ok {
-			log.S().Infof("thread %d insert %d rows, total cost time %v", id, count, time.Since(t))
-			return
-		}
-
-		sqlPrefix := job.sqlPrefix
-		datas := job.datas
-		count += len(datas)
-
-		sql := fmt.Sprintf("%s %s;", sqlPrefix, strings.Join(datas, ","))
-		_, err := db.Exec(sql)
-		if err == nil {
-			continue
-		}
-
-		log.S().Errorf("execute sql %s failed, %d rows is not inserted, error %v", sqlPrefix, errors.ErrorStack(err))
-		if !strings.Contains(err.Error(), "Duplicate entry") {
-			continue
-		}
-
-		log.S().Warnf("%s insert data have duplicate key, insert for every row", sqlPrefix)
-		for _, data := range datas {
-			_, err = db.Exec(fmt.Sprintf("%s %s;", sqlPrefix, data))
-			if err != nil {
-				log.S().Error(errors.ErrorStack(err))
-			}
-		}
-
 		select {
+		case job, ok := <-jobChan:
+			if !ok {
+				return
+			}
+
+			sqlPrefix := job.sqlPrefix
+			datas := job.datas
+			rowCount += len(datas)
+			txnCount++
+
+			sql := fmt.Sprintf("%s %s;", sqlPrefix, strings.Join(datas, ","))
+			_, err := db.Exec(sql)
+			if err == nil {
+				continue
+			}
+
+			log.S().Errorf("execute sql %s failed, %d rows is not inserted, error %v", sqlPrefix, errors.ErrorStack(err))
+			if !strings.Contains(err.Error(), "Duplicate entry") {
+				continue
+			}
+
+			log.S().Warnf("%s insert data have duplicate key, insert for every row", sqlPrefix)
+			for _, data := range datas {
+				_, err = db.Exec(fmt.Sprintf("%s %s;", sqlPrefix, data))
+				if err != nil {
+					log.S().Error(errors.ErrorStack(err))
+				}
+			}
+		case <-ticker.C:
+			log.S().Infof("[status] thread %d insert %d rows, %d transcations, cost time %v", id, rowCount, txnCount, time.Since(t))
 		case <-ctx.Done():
-			log.S().Infof("thread %d insert %d rows, total cost time %v", id, count, time.Since(t))
 			return
-		default:
 		}
 	}
 }

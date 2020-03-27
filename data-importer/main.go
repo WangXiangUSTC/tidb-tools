@@ -29,8 +29,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb-tools/pkg/dbutil"
-	//"github.com/pingcap/tidb-binlog/tests/dailytest"
-	//"github.com/pingcap/tidb-binlog/tests/util"
 )
 
 func main() {
