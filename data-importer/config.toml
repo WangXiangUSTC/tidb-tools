@@ -2,8 +2,8 @@
 
 log-level = "info"
 
-worker-count = 10
-job-count = 1000000
+worker-count = 32
+job-count = 100000
 batch = 100
 
 table-sql-dir = "/Users/xiang/newWorld/gopath/src/github.com/pingcap/tidb-tools/sqls"
@@ -13,5 +13,5 @@ qps = 5000
 [source-db]
 host = "127.0.0.1"
 user = "root"
-password = "123456"
+password = ""
 port = 3306

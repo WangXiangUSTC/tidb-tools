@@ -22,6 +22,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/jszwec/csvutil"
@@ -81,6 +82,7 @@ func main() {
 
 	Import(sourceDB, tableSQLs, cfg.WorkerCount, cfg.JobCount, cfg.Batch, tableRatio, cfg.QPS)
 
+	time.Sleep(time.Second)
 	log.S().Info("import finished!!!")
 }
 
@@ -90,8 +92,6 @@ func analyzeSQLFile(file string) (string, error) {
 		return "", err
 	}
 	defer f.Close()
-
-	//tctx := l.logCtx.WithContext(ctx)
 
 	data := make([]byte, 0, 1024*1024)
 	br := bufio.NewReader(f)
@@ -113,28 +113,6 @@ func analyzeSQLFile(file string) (string, error) {
 			if strings.HasPrefix(query, "/*") && strings.HasSuffix(query, "*/;") {
 				continue
 			}
-
-			/*
-				var sqls []string
-				dstSchema, dstTable := fetchMatchedLiteral(tctx, l.tableRouter, schema, table)
-				// for table
-				if table != "" {
-					sqls = append(sqls, fmt.Sprintf("USE `%s`;", dstSchema))
-					query = renameShardingTable(query, table, dstTable)
-				} else {
-					query = renameShardingSchema(query, schema, dstSchema)
-				}
-			*/
-
-			//l.logCtx.L().Debug("schema create statement", zap.String("sql", query))
-
-			/*
-				sqls = append(sqls, query)
-				err = conn.executeSQL(tctx, sqls)
-				if err != nil {
-					return terror.WithScope(err, terror.ScopeDownstream)
-				}
-			*/
 		}
 
 	}

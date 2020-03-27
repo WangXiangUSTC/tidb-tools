@@ -18,7 +18,8 @@ import (
 	"database/sql"
 	"fmt"
 	"strings"
-	"sync"
+	//"sync"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
@@ -26,15 +27,17 @@ import (
 
 // Import generates insert sqls and execute
 func Import(db *sql.DB, tableSQLs []string, workerCount int, jobCount int64, batch int64, ratios map[string]float64, qps int64) {
-	var wg sync.WaitGroup
-	wg.Add(len(tableSQLs))
+	//var wg sync.WaitGroup
+	//wg.Add(len(tableSQLs))
 
-	jobChan := make(chan job, 100)
-	//doneChan := make(chan struct{}, workerCount)
+	jobChan := make(chan job, workerCount*10)
+	jobDone := make(chan struct{}, len(tableSQLs))
 
 	for i := range tableSQLs {
 		go func(i int) {
-			defer wg.Done()
+			defer func() {
+				jobDone <- struct{}{}
+			}()
 
 			table := newTable()
 			err := parseTableSQL(table, tableSQLs[i])
@@ -54,19 +57,42 @@ func Import(db *sql.DB, tableSQLs []string, workerCount int, jobCount int64, bat
 
 			if ratio, ok := ratios[quoteSchemaTable(table.schema, table.name)]; ok {
 				tableJobCount := int64(float64(jobCount) * ratio)
-				if tableJobCount > 1 {
-					generateJob(context.Background(), table, db, tableJobCount, batch, ratio, qps, jobChan)
-				} else {
-					log.S().Warnf("table %s.%s's row count is less than 1, will ignore it", table.schema, table.name)
+				if tableJobCount < 1 {
+					tableJobCount = 1
 				}
+				generateJob(context.Background(), table, db, tableJobCount, batch, ratio, qps, jobChan)
+				/*
+					if tableJobCount > 1 {
+						generateJob(context.Background(), table, db, tableJobCount, batch, ratio, qps, jobChan)
+					} else {
+						log.S().Warnf("table %s.%s's row count is less than 1, will ignore it", table.schema, table.name)
+					}
+				*/
+			} else {
+				generateJob(context.Background(), table, db, 1, batch, 1, 1, jobChan)
 			}
 		}(i)
 	}
 
-	go doJobs(context.Background(), db, batch, workerCount, jobChan)
+	doneNum := 0
+	go func() {
+		for {
+			select {
+			case <-jobDone:
+				doneNum++
+			default:
+			}
 
-	wg.Wait()
-	close(jobChan)
+			if doneNum >= len(tableSQLs) {
+				close(jobChan)
+				return
+			}
+
+			time.Sleep(time.Second)
+		}
+	}()
+
+	doJobs(context.Background(), db, batch, workerCount, jobChan)
 }
 
 // TruncateTestTable truncates test data

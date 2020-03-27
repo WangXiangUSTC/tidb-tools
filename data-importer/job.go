@@ -18,7 +18,7 @@ import (
 	"database/sql"
 	"fmt"
 	"strings"
-	//"sync"
+	"sync"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -105,25 +105,33 @@ func generateJob(ctx context.Context, table *table, db *sql.DB, jobCount int64, 
 
 	interval := int64(1)
 	speed := int64(float64(qps) * ratio)
-	if speed == 0 {
-		log.S().Infof("table %s.%s 's qps is too low, will ignore it", table.schema, table.name)
-		return
-	}
 	if speed < 1 {
 		interval = int64(1 / ratio)
-		speed = speed
+		speed = speed * interval
 	}
 
-	log.S().Infof("table %s.%s will insert %d rows every %d seconds", table.schema, table.name, speed, interval)
-	sc := NewSpeedControl(speed, interval)
+	var sc *SpeedControl
+	if jobCount > 10 && interval < 10 {
+		log.S().Infof("table %s.%s will insert %d rows every %d seconds", table.schema, table.name, speed, interval)
+		sc = NewSpeedControl(speed, interval)
+	}
+
 	count := int64(0)
 
+	t := time.Now()
 	defer func() {
-		log.S().Infof("generate %d rows for table %s.%s to insert", count, table.schema, table.name)
+		log.S().Infof("generate %d rows for table %s.%s to insert, cost %v", count, table.schema, table.name, time.Since(t))
 	}()
 
 	for count < jobCount {
-		num := sc.ApplyTokenSync()
+		num := int64(0)
+		if sc != nil {
+			num = sc.ApplyTokenSync()
+		} else {
+			num = jobCount
+		}
+
+		//log.S().Infof("table %s.%s apply %d", table.schema, table.name, num)
 
 		if count+num > jobCount {
 			num = jobCount - count
@@ -146,43 +154,6 @@ func generateJob(ctx context.Context, table *table, db *sql.DB, jobCount int64, 
 			return
 		case jobChan <- newJob:
 		}
-
-		/*
-
-
-			var wg sync.WaitGroup
-
-			// one table's max thread is 5
-			threadBatch := 5*batch
-			threadNum := num / threadBatch
-			if threadNum > 5 {
-				threadBatch = num/5
-			}
-			for i := int64(0); i < num; i += threadBatch {
-				end := i + threadBatch
-				if end > num {
-					end = num
-				}
-
-				if end-i <= 0 {
-					continue
-				}
-
-				wg.Add(1)
-				go func(doNum int64) {
-					doSqls(table, db, batch, doNum)
-					wg.Done()
-				}(end-i)
-			}
-
-			wg.Wait()
-
-			select {
-			case <- ctx.Done():
-				break
-			default:
-			}
-		*/
 	}
 }
 
@@ -196,26 +167,37 @@ func doJobs(ctx context.Context, db *sql.DB, batch int64, workerCount int, allJo
 	defer func() {
 		log.S().Infof("all rows inserted, cost time %v", time.Since(t))
 	}()
+
+	var wg sync.WaitGroup
 	jobChans := make([]chan job, 0, workerCount)
 	for i := 0; i < workerCount; i++ {
 		jobChan := make(chan job, 10)
 		jobChans = append(jobChans, jobChan)
-		go doJob(ctx, db, i, batch, jobChan)
+		wg.Add(1)
+		go func(threadNum int) {
+			defer wg.Done()
+			doJob(ctx, db, threadNum, batch, jobChan)
+		}(i)
 	}
 
-	i := 0
+	k := 0
 	for {
 		j, ok := <-allJobChan
 		if !ok {
-			return
+			for _, jobCh := range jobChans {
+				close(jobCh)
+			}
+			break
 		}
 
 		jobs := splitJob(j, batch)
 		for _, newJob := range jobs {
-			jobChans[i%workerCount] <- newJob
-			i++
+			jobChans[k%workerCount] <- newJob
+			k++
 		}
 	}
+
+	wg.Wait()
 }
 
 func splitJob(j job, batch int64) []job {
@@ -239,15 +221,17 @@ func splitJob(j job, batch int64) []job {
 }
 
 func doJob(ctx context.Context, db *sql.DB, id int, batch int64, jobChan chan job) {
+	log.S().Infof("thread %d is work", id)
 	count := 0
 	t := time.Now()
 	defer func() {
-		log.S().Infof("thread %d insert %d rows, total cost time %v", count, time.Since(t))
+		log.S().Infof("thread %d insert %d rows, total cost time %v", id, count, time.Since(t))
 	}()
 
 	for {
 		job, ok := <-jobChan
 		if !ok {
+			log.S().Infof("thread %d insert %d rows, total cost time %v", id, count, time.Since(t))
 			return
 		}
 
@@ -276,6 +260,7 @@ func doJob(ctx context.Context, db *sql.DB, id int, batch int64, jobChan chan jo
 
 		select {
 		case <-ctx.Done():
+			log.S().Infof("thread %d insert %d rows, total cost time %v", id, count, time.Since(t))
 			return
 		default:
 		}
