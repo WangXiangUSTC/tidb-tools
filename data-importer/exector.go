@@ -27,8 +27,10 @@ import (
 
 // Import generates insert sqls and execute
 func Import(db *sql.DB, tableSQLs []string, workerCount int, jobCount int64, batch int64, ratios map[string]float64, qps int64) {
-	//var wg sync.WaitGroup
-	//wg.Add(len(tableSQLs))
+	avg := false
+	if len(ratios) == 0 {
+		avg = true
+	}
 
 	jobChan := make(chan job, workerCount)
 	jobDone := make(chan struct{}, len(tableSQLs))
@@ -55,19 +57,21 @@ func Import(db *sql.DB, tableSQLs []string, workerCount int, jobCount int64, bat
 				}
 			}
 
-			if ratio, ok := ratios[quoteSchemaTable(table.schema, table.name)]; ok {
+			ratio, ok := ratios[quoteSchemaTable(table.schema, table.name)] 
+			if !ok {
+				if avg {
+					ratio = float64(1) / float64(len(tableSQLs))
+					ok = true
+				}
+			}
+			log.S().Infof("%s.%s ratio %f", table.schema, table.name, ratio)
+
+			if ok {
 				tableJobCount := int64(float64(jobCount) * ratio)
 				if tableJobCount < 1 {
 					tableJobCount = 1
 				}
 				generateJob(context.Background(), table, db, tableJobCount, batch, ratio, qps, jobChan)
-				/*
-					if tableJobCount > 1 {
-						generateJob(context.Background(), table, db, tableJobCount, batch, ratio, qps, jobChan)
-					} else {
-						log.S().Warnf("table %s.%s's row count is less than 1, will ignore it", table.schema, table.name)
-					}
-				*/
 			} else {
 				generateJob(context.Background(), table, db, 1, batch, 1, 1, jobChan)
 			}

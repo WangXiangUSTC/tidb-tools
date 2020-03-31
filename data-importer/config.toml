@@ -7,7 +7,7 @@ job-count = 100000
 batch = 100
 
 table-sql-dir = "/Users/xiang/newWorld/gopath/src/github.com/pingcap/tidb-tools/sqls"
-ratio-file = "/Users/xiang/newWorld/gopath/src/github.com/pingcap/tidb-tools/atlas_wms.csv"
+#ratio-file = "/Users/xiang/newWorld/gopath/src/github.com/pingcap/tidb-tools/atlas_wms.csv"
 qps = 5000
 
 base = 1

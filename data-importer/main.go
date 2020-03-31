@@ -120,6 +120,10 @@ func analyzeSQLFile(file string) (string, error) {
 }
 
 func analyzeRatioFile(file string) (map[string]float64, error) {
+	tablesMap := make(map[string]float64)
+	if len(file) == 0 {
+		return tablesMap, nil
+	}
 	type tableRatio struct {
 		Schema string  `csv:"Db_name"`
 		Table  string  `csv:"Table_name"`
@@ -136,7 +140,6 @@ func analyzeRatioFile(file string) (map[string]float64, error) {
 		return nil, err
 	}
 
-	tablesMap := make(map[string]float64)
 	for _, table := range tables {
 		tablesMap[quoteSchemaTable(table.Schema, table.Table)] = table.Ratio
 	}
