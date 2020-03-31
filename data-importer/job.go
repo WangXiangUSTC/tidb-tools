@@ -60,6 +60,9 @@ func doSqls(table *table, db *sql.DB, batch, count int64) {
 		}
 
 		log.S().Errorf("%s.%s execute sql %s failed, %d rows is not inserted, error %v", table.schema, table.name, sqlPrefix, errors.ErrorStack(err))
+		// tmp change
+		//continue
+
 		if !strings.Contains(err.Error(), "Duplicate entry") {
 			continue
 		}
@@ -225,8 +228,10 @@ func doJob(ctx context.Context, db *sql.DB, id int, batch int64, jobChan chan jo
 	rowCount := 0
 	txnCount := 0
 	t := time.Now()
+	executeDuration := time.Duration(0)
+
 	defer func() {
-		log.S().Infof("[Done] thread %d insert %d rows, %d transcations, total cost time %v", id, rowCount, txnCount, time.Since(t))
+		log.S().Infof("[Done] thread %d insert %d rows, %d transcations, total cost time %v, execute sql time %v", id, rowCount, txnCount, time.Since(t), executeDuration)
 	}()
 
 	ticker := time.NewTicker(time.Duration(10) * time.Second)
@@ -239,6 +244,8 @@ func doJob(ctx context.Context, db *sql.DB, id int, batch int64, jobChan chan jo
 				return
 			}
 
+			beginT := time.Now()
+
 			sqlPrefix := job.sqlPrefix
 			datas := job.datas
 			rowCount += len(datas)
@@ -247,11 +254,13 @@ func doJob(ctx context.Context, db *sql.DB, id int, batch int64, jobChan chan jo
 			sql := fmt.Sprintf("%s %s;", sqlPrefix, strings.Join(datas, ","))
 			_, err := db.Exec(sql)
 			if err == nil {
+				executeDuration += time.Since(beginT)
 				continue
 			}
 
-			log.S().Errorf("execute sql %s failed, %d rows is not inserted, error %v", sqlPrefix, errors.ErrorStack(err))
+			log.S().Errorf("execute sql %s failed, %d rows is not inserted, error %v", sqlPrefix, len(datas), errors.ErrorStack(err))
 			if !strings.Contains(err.Error(), "Duplicate entry") {
+				executeDuration += time.Since(beginT)
 				continue
 			}
 
@@ -262,8 +271,9 @@ func doJob(ctx context.Context, db *sql.DB, id int, batch int64, jobChan chan jo
 					log.S().Error(errors.ErrorStack(err))
 				}
 			}
+			executeDuration += time.Since(beginT)
 		case <-ticker.C:
-			log.S().Infof("[status] thread %d insert %d rows, %d transcations, cost time %v", id, rowCount, txnCount, time.Since(t))
+			log.S().Infof("[status] thread %d insert %d rows, %d transcations, cost time %v, execute sql time %v", id, rowCount, txnCount, time.Since(t), executeDuration)
 		case <-ctx.Done():
 			return
 		}

@@ -22,7 +22,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/jszwec/csvutil"
@@ -42,6 +41,9 @@ func main() {
 		log.S().Errorf("parse cmd flags err %s\n", err)
 		os.Exit(2)
 	}
+
+	defaultStep = cfg.Step
+	minInt64 = cfg.Base
 
 	sourceDB, err := dbutil.OpenDB(cfg.SourceDBCfg)
 	if err != nil {
@@ -80,7 +82,6 @@ func main() {
 
 	Import(sourceDB, tableSQLs, cfg.WorkerCount, cfg.JobCount, cfg.Batch, tableRatio, cfg.QPS)
 
-	time.Sleep(time.Second)
 	log.S().Info("import finished!!!")
 }
 

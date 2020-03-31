@@ -30,7 +30,7 @@ func Import(db *sql.DB, tableSQLs []string, workerCount int, jobCount int64, bat
 	//var wg sync.WaitGroup
 	//wg.Add(len(tableSQLs))
 
-	jobChan := make(chan job, workerCount*10)
+	jobChan := make(chan job, workerCount)
 	jobDone := make(chan struct{}, len(tableSQLs))
 
 	for i := range tableSQLs {

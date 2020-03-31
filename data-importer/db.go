@@ -27,6 +27,8 @@ import (
 	//"github.com/pingcap/tidb-binlog/tests/util"
 )
 
+var minInt64 int64
+
 func intRangeValue(column *column, min int64, max int64) (int64, int64) {
 	var err error
 	if len(column.min) > 0 {
@@ -251,7 +253,7 @@ func genColumnData(table *table, column *column) (string, error) {
 	case mysql.TypeLong:
 		var data int64
 		if isUnique {
-			data = uniqInt64Value(column, 0, math.MaxUint32)
+			data = uniqInt64Value(column, minInt64, math.MaxUint32)
 		} else {
 			if isUnsigned {
 				data = randInt64Value(column, 0, math.MaxUint32)
@@ -263,7 +265,7 @@ func genColumnData(table *table, column *column) (string, error) {
 	case mysql.TypeLonglong:
 		var data int64
 		if isUnique {
-			data = uniqInt64Value(column, 0, math.MaxInt64)
+			data = uniqInt64Value(column, minInt64, math.MaxInt64)
 		} else {
 			if isUnsigned {
 				data = randInt64Value(column, 0, math.MaxInt64)

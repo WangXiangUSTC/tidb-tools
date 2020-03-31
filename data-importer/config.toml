@@ -10,6 +10,10 @@ table-sql-dir = "/Users/xiang/newWorld/gopath/src/github.com/pingcap/tidb-tools/
 ratio-file = "/Users/xiang/newWorld/gopath/src/github.com/pingcap/tidb-tools/atlas_wms.csv"
 qps = 5000
 
+base = 1
+
+step = 8
+
 [source-db]
 host = "127.0.0.1"
 user = "root"

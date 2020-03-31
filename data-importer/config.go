@@ -34,6 +34,8 @@ func NewConfig() *Config {
 	fs.Int64Var(&cfg.JobCount, "n", 1, "total job count")
 	fs.Int64Var(&cfg.Batch, "b", 1, "insert batch commit count")
 	fs.StringVar(&cfg.LogLevel, "L", "info", "log level: debug, info, warn, error, fatal")
+	fs.Int64Var(&cfg.Step, "step", 1, "step")
+	fs.Int64Var(&cfg.Base, "base", 1, "base")
 
 	return cfg
 }
@@ -59,6 +61,10 @@ type Config struct {
 	RatioFile string `toml:"ratio-file" json:"ratio-file"`
 
 	QPS int64 `toml:"qps" json:"qps"`
+
+	Step int64 `toml:"step" json:"step"`
+
+	Base int64 `toml:"base" json:"base"`
 
 	configFile string
 }
